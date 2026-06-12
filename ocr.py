@@ -24,7 +24,7 @@ from PIL import Image
 from data import NOTE_FIELDS
 
 PROVIDER = os.getenv("OCR_PROVIDER", "medgemma").lower()
-MAX_NEW_TOKENS = int(os.getenv("MAX_NEW_TOKENS", "1024"))
+MAX_NEW_TOKENS = int(os.getenv("MAX_NEW_TOKENS", "2048"))
 
 _FIELD_KEYS = [key for key, _label, _kind in NOTE_FIELDS]
 
@@ -38,20 +38,16 @@ TRANSCRIBE_PROMPT = (
 
 _FIELD_TEMPLATE = ",\n".join(f'  "{k}": ""' for k in _FIELD_KEYS)
 EXTRACT_PROMPT = (
-    "You are reading a photographed handwritten clinical progress note.\n"
-    "Step 1: transcribe the note exactly. Step 2: map it into a structured note.\n\n"
-    "Return ONLY one JSON object (no markdown fences, no commentary) of this shape:\n"
+    "Read this handwritten clinical note and return ONLY a JSON object — no thinking, "
+    "no explanation, no markdown fences, nothing but the JSON. Use exactly these keys:\n"
     "{\n"
-    '  "raw_transcript": "the full verbatim transcription",\n'
+    '  "raw_transcript": "",\n'
     f"{_FIELD_TEMPLATE}\n"
-    "}\n\n"
-    "Fill each field from the note's content. Map sections sensibly: Chief Complaint -> "
-    "chief_complaint; HPI / history of present illness -> hpi; PMHx / past medical history "
-    "-> pmhx; FMHx / family history -> fmhx; SHx / social history -> shx; ROS / review of "
-    "systems -> ros; exam / PE / physical exam -> pe; assessment / impression -> assessment; "
-    "plan / management -> plan; note_type is the kind of note if stated (else \"\").\n"
-    "If a section is absent from the note, use an empty string. Do NOT invent clinical "
-    "information. Output JSON only."
+    "}\n"
+    'Set "raw_transcript" to the full verbatim transcription of the note. Fill each section '
+    "field from the note's content: chief_complaint, hpi, pmhx, fmhx, shx, ros, pe, "
+    "assessment, plan, and note_type (the kind of note if stated). If a section is absent, "
+    'use "". Do not invent information. Your entire response must start with { and end with }.'
 )
 
 
@@ -154,13 +150,41 @@ def _parse_json(text: str) -> dict:
     return json.loads(t)
 
 
+def _json_str(s: str) -> str:
+    """Decode a captured JSON string body (handle escapes; tolerate raw newlines)."""
+    try:
+        return json.loads('"' + s + '"')
+    except Exception:  # noqa: BLE001
+        return s.replace('\\n', '\n').replace('\\"', '"').replace('\\t', '\t').strip()
+
+
+def _regex_value(text: str, key: str) -> str:
+    """Pull one "key": "value" out of (possibly truncated/invalid) JSON-ish text."""
+    m = re.search(r'"' + re.escape(key) + r'"\s*:\s*"((?:[^"\\]|\\.)*)"', text, re.DOTALL)
+    return _json_str(m.group(1)).strip() if m else ""
+
+
+def _salvage_fields(text: str) -> dict:
+    return {k: _regex_value(text, k) for k in _FIELD_KEYS}
+
+
 def warmup():
-    """Preload the local model so the first request doesn't pay the load cost."""
-    if PROVIDER == "medgemma":
-        try:
-            _load_pipe()
-        except Exception:  # noqa: BLE001 - warmup is best-effort
-            pass
+    """Preload the local model AND run a tiny generation so CUDA kernels are
+    compiled at startup — the first real scan is then fast, not cold."""
+    if PROVIDER != "medgemma":
+        return
+    try:
+        pipe = _load_pipe()
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "image", "image": Image.new("RGB", (64, 64), "white")},
+                {"type": "text", "text": "ok"},
+            ],
+        }]
+        pipe(text=messages, max_new_tokens=1)
+    except Exception:  # noqa: BLE001 - warmup is best-effort
+        pass
 
 
 def transcribe(image_bytes: bytes) -> str:
@@ -182,9 +206,12 @@ def extract(image_bytes: bytes) -> dict:
 
     try:
         data = _parse_json(raw)
-    except Exception:  # noqa: BLE001 - degrade gracefully to raw transcript
-        return {"text": raw, "fields": {}}
+        fields = {k: str(data.get(k) or "").strip() for k in _FIELD_KEYS}
+        transcript = str(data.get("raw_transcript") or "").strip()
+    except Exception:  # noqa: BLE001 - JSON malformed/truncated: salvage per-key
+        fields = _salvage_fields(raw)
+        transcript = _regex_value(raw, "raw_transcript")
 
-    fields = {k: str(data.get(k) or "").strip() for k in _FIELD_KEYS}
-    transcript = str(data.get("raw_transcript") or "").strip() or raw
+    if not transcript:
+        transcript = "\n".join(v for v in fields.values() if v) or raw.strip()
     return {"text": transcript, "fields": fields}
