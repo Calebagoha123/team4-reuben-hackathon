@@ -23,6 +23,7 @@ import socket
 import threading
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import date
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -34,7 +35,16 @@ import qrcode
 import ocr
 from data import NOTE_FIELDS, PATIENT
 
-app = FastAPI(title="MediSnap EHR")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Preload the local model in the background so the first scan is fast.
+    if os.getenv("WARMUP", "1") == "1":
+        threading.Thread(target=ocr.warmup, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="MediSnap EHR", lifespan=lifespan)
 templates = Jinja2Templates(directory="templates")
 
 # session_id -> {status, text, error, created}
@@ -123,7 +133,8 @@ async def create_scan_session():
     session_id = uuid.uuid4().hex[:10]
     with _sessions_lock:
         _sessions[session_id] = {
-            "status": "waiting", "text": None, "error": None, "created": time.time()
+            "status": "waiting", "text": None, "fields": None, "error": None,
+            "created": time.time(),
         }
     mobile_url = f"{_base_url()}/m/{session_id}"
     return {"id": session_id, "mobile_url": mobile_url, "qr": _qr_data_uri(mobile_url)}
@@ -142,10 +153,12 @@ def _run_ocr(session_id: str, raw: bytes):
         if session_id in _sessions:
             _sessions[session_id]["status"] = "processing"
     try:
-        text = ocr.transcribe(raw)
+        result = ocr.extract(raw)  # {text, fields}
         with _sessions_lock:
             if session_id in _sessions:
-                _sessions[session_id].update(status="done", text=text)
+                _sessions[session_id].update(
+                    status="done", text=result["text"], fields=result["fields"]
+                )
     except Exception as e:  # noqa: BLE001 - surface to the UI
         with _sessions_lock:
             if session_id in _sessions:

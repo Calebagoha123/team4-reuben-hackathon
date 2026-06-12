@@ -30,6 +30,10 @@
     font:inherit; background:#fff; box-shadow: inset 1px 1px 0 #e7edf3;
   }
   .field input:focus, .field textarea:focus { outline:0; border-color:#5d92c9; background:#fcffff; }
+  .field input.filled, .field textarea.filled {
+    background:#fffbe6; border-color:#e0b400; animation: flashfill 1.4s ease-out;
+  }
+  @keyframes flashfill { 0% { background:#fff3b0; } 100% { background:#fffbe6; } }
   .field textarea { min-height:54px; resize:vertical; }
   .formbar { padding:.5rem .8rem; border-top:1px solid #e2e8f0; background:#f3f6fa; }
   .btn {
@@ -157,6 +161,18 @@ let sessionId = null;
 function setStatus(cls, html) { statusEl.className = 'status ' + cls; statusEl.innerHTML = html; }
 function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
 
+function fillFields(fields) {
+  if (!fields) return;
+  for (const [k, v] of Object.entries(fields)) {
+    const el = document.getElementById('f_' + k);
+    if (el && v) {
+      el.value = v;
+      el.classList.add('filled');
+      setTimeout(() => el.classList.remove('filled'), 2200);
+    }
+  }
+}
+
 async function startScan() {
   scanned.classList.remove('show');
   overlay.classList.add('show');
@@ -184,6 +200,7 @@ async function poll() {
       setStatus('done', '✓ Done');
       scannedText.textContent = data.text || '(no text found)';
       scanned.classList.add('show');
+      fillFields(data.fields);
       setTimeout(() => overlay.classList.remove('show'), 700);
     } else if (data.status === 'error') {
       stopPolling();
