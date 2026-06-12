@@ -24,7 +24,10 @@ from PIL import Image
 from data import NOTE_FIELDS
 
 PROVIDER = os.getenv("OCR_PROVIDER", "medgemma").lower()
-MAX_NEW_TOKENS = int(os.getenv("MAX_NEW_TOKENS", "2048"))
+# Upper bound on generated tokens. generate() requires *a* cap (without one,
+# transformers falls back to max_length=20). It's a ceiling, not a target —
+# the model stops at EOS when the JSON is done, so a high value is ~free.
+MAX_NEW_TOKENS = int(os.getenv("MAX_NEW_TOKENS", "4096"))
 
 _FIELD_KEYS = [key for key, _label, _kind in NOTE_FIELDS]
 
