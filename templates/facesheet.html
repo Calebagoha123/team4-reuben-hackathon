@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Facesheet{% endblock %}
+{% block content %}
+<div class="grid">
+
+  <div class="panel">
+    <div class="ph"><span class="dot"></span>Problem List</div>
+    <div class="pb">
+      <table class="g">
+        <tr><th>Problem</th><th>Onset</th><th>Status</th></tr>
+        {% for p in patient.problems %}
+        <tr><td>{{ p.name }}</td><td>{{ p.onset }}</td>
+          <td><span class="pill {{ 'active' if p.status=='Active' else 'resolved' }}">{{ p.status }}</span></td></tr>
+        {% else %}
+        <tr class="empty"><td colspan="3">No problems recorded</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="ph"><span class="dot"></span>Allergies</div>
+    <div class="pb">
+      <table class="g">
+        <tr><th>Allergen</th><th>Reaction</th></tr>
+        {% for a in patient.allergies %}
+        <tr><td>{{ a.allergen }}</td><td>{{ a.reaction }}</td></tr>
+        {% else %}
+        <tr class="empty"><td colspan="2">No allergies recorded</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="ph"><span class="dot"></span>Medication List</div>
+    <div class="pb">
+      <table class="g">
+        <tr><th>Medication</th><th>Sig</th><th>Prescriber</th></tr>
+        {% for m in patient.medications %}
+        <tr><td>{{ m.name }}</td><td>{{ m.sig }}</td><td>{{ m.prescriber }}</td></tr>
+        {% else %}
+        <tr class="empty"><td colspan="3">No medications recorded</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="ph"><span class="dot"></span>Order Hx / Health Maintenance</div>
+    <div class="pb">
+      <table class="g">
+        <tr><th>Date</th><th>Order</th><th>Status</th></tr>
+        {% for o in patient.orders %}
+        <tr><td>{{ o.date }}</td><td>{{ o.name }}</td>
+          <td><span class="pill {{ 'pending' if o.status=='Pending' else 'resolved' }}">{{ o.status }}</span></td></tr>
+        {% else %}
+        <tr class="empty"><td colspan="3">No orders recorded</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+  </div>
+
+  <div class="panel" style="grid-column: 1 / -1;">
+    <div class="ph"><span class="dot"></span>Vitals</div>
+    <div class="pb">
+      <table class="g">
+        <tr><th>Date</th><th>BP</th><th>HR</th><th>Temp</th><th>RR</th><th>SpO₂</th><th>Wt</th></tr>
+        {% for v in patient.vitals %}
+        <tr><td>{{ v.date }}</td><td>{{ v.bp }}</td><td>{{ v.hr }}</td><td>{{ v.temp }}</td>
+          <td>{{ v.rr }}</td><td>{{ v.spo2 }}</td><td>{{ v.wt }}</td></tr>
+        {% else %}
+        <tr class="empty"><td colspan="7">No vitals recorded</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="ph"><span class="dot"></span>Family History</div>
+    <div class="pb"><div class="freebox {{ '' if patient.family_hx else 'empty-note' }}">{{ patient.family_hx or 'No family history recorded' }}</div></div>
+  </div>
+
+  <div class="panel">
+    <div class="ph"><span class="dot"></span>Social History</div>
+    <div class="pb"><div class="freebox {{ '' if patient.social_hx else 'empty-note' }}">{{ patient.social_hx or 'No social history recorded' }}</div></div>
+  </div>
+
+  <div class="panel">
+    <div class="ph"><span class="dot"></span>Surgical History</div>
+    <div class="pb"><div class="freebox {{ '' if patient.surgical_hx else 'empty-note' }}">{{ patient.surgical_hx or 'No surgical history recorded' }}</div></div>
+  </div>
+
+  <div class="panel">
+    <div class="ph"><span class="dot"></span>Task List</div>
+    <div class="pb">
+      <table class="g">
+        <tr><th>Task</th><th>Due</th><th>Status</th></tr>
+        {% for t in patient.tasks %}
+        <tr><td>{{ t.task }}</td><td>{{ t.due }}</td><td><span class="pill pending">{{ t.status }}</span></td></tr>
+        {% else %}
+        <tr class="empty"><td colspan="3">No tasks</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

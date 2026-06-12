@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}MediSnap — Patient Charts{% endblock %}</title>
+<style>
+  :root {
+    --green-dk: #2f5e2a;
+    --green:    #3f7c37;
+    --green-lt: #cfe0c6;
+    --tool:     #e7eee1;
+    --cream:    #f4efce;
+    --cream-bd: #c9c08a;
+    --hdr1:     #5d92c9;   /* panel title gradient top */
+    --hdr2:     #3f74ad;   /* panel title gradient bottom */
+    --panel-bd: #7f97b2;
+    --chrome:   #d6dac6;
+    --ink:      #1d2630;
+    --alert:    #b3110d;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: Tahoma, Verdana, "Segoe UI", Geneva, sans-serif;
+    font-size: 11px; color: var(--ink);
+    background: var(--chrome);
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; text-decoration: none; }
+
+  /* ---- App header (green) ---- */
+  .app-top {
+    background: linear-gradient(180deg, var(--green) 0%, var(--green-dk) 100%);
+    color: #eef6ea; display: flex; align-items: center; gap: .6rem;
+    padding: .25rem .6rem; border-bottom: 1px solid #224420;
+  }
+  .app-top .brand { font-weight: 700; font-size: 14px; letter-spacing: .5px; color: #fff; }
+  .app-top .brand b { color: #bfe6a8; }
+  .app-top .product { color: #cfe6c6; font-size: 10px; }
+  .app-top .spacer { flex: 1; }
+  .app-top .who { color: #e6f2df; font-size: 10px; }
+
+  /* ---- Module tab bar ---- */
+  .modbar {
+    display: flex; gap: 1px; background: var(--green-dk);
+    padding: 0 .4rem; border-bottom: 1px solid #1d3a1b;
+  }
+  .modbar a {
+    color: #dcebd4; padding: .3rem .7rem; font-size: 11px;
+    border-top: 2px solid transparent;
+  }
+  .modbar a:hover { background: #3a6f33; }
+  .modbar a.on { background: var(--tool); color: #244; border-top-color: #f0c419; font-weight: 700; }
+
+  /* ---- Toolbar / breadcrumb ---- */
+  .toolbar {
+    background: var(--tool); border-bottom: 1px solid #b9c4ad;
+    display: flex; align-items: center; gap: .6rem; padding: .25rem .6rem;
+  }
+  .toolbar .crumb { font-weight: 700; color: #33502d; }
+  .toolbar .spacer { flex: 1; }
+  .toolbar .clock { color: #4b5d44; font-size: 10px; }
+  .iconbtn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 26px; border: 1px solid #9aa790;
+    background: linear-gradient(180deg,#fbfcf9,#dde4d4); border-radius: 2px;
+    color: #2f4a2a; cursor: pointer; padding: 0;
+  }
+  .iconbtn:hover { background: linear-gradient(180deg,#fff,#e8eede); border-color:#7f8e74; }
+  .iconbtn:active { background: #d4dcc8; }
+  .iconbtn svg { width: 17px; height: 17px; }
+
+  /* ---- Patient strip + folder tabs ---- */
+  .ptstrip {
+    background: var(--cream); border-bottom: 1px solid var(--cream-bd);
+    padding: .3rem .6rem 0; display: flex; align-items: flex-end; gap: 1rem;
+  }
+  .ptstrip .pt {
+    padding-bottom: .35rem; display: flex; align-items: baseline; gap: .8rem; flex-wrap: wrap;
+  }
+  .ptstrip .pt .nm { font-weight: 700; font-size: 12px; color: #5a3d12; }
+  .ptstrip .pt .meta { color: #6b5a32; }
+  .ptstrip .pt .allergy {
+    background: var(--alert); color: #fff; padding: .05rem .4rem; border-radius: 2px; font-weight: 700;
+  }
+  .tabs { display: flex; gap: 2px; margin-left: auto; }
+  .tabs a {
+    padding: .3rem .9rem; background: #e3e7d2; border: 1px solid var(--cream-bd);
+    border-bottom: 0; border-radius: 5px 5px 0 0; color: #4d5a43; position: relative; top: 1px;
+  }
+  .tabs a.on { background: #fff; color: #1d2630; font-weight: 700; border-color: #9aa9b9; }
+
+  /* ---- Body shell ---- */
+  .shell { display: flex; align-items: stretch; min-height: calc(100vh - 132px); background:#fff; }
+  .actions {
+    width: 158px; flex-shrink: 0; background: #eef1e6; border-right: 1px solid #c4ccb6;
+    padding: .5rem .1rem;
+  }
+  .actions h4 {
+    margin: 0 .5rem .35rem; font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+    color: #6f7c63; border-bottom: 1px solid #cfd6c2; padding-bottom: .25rem;
+  }
+  .actions a { display: block; padding: .25rem .6rem; color: #2c4f8a; }
+  .actions a:hover { background: #dfe6d2; text-decoration: underline; }
+
+  main.content { flex: 1; padding: .55rem; overflow: auto; background:#eef0e7; }
+
+  /* ---- Panels ---- */
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+  .panel {
+    background: #fff; border: 1px solid var(--panel-bd);
+    box-shadow: inset 0 0 0 1px #fff; border-radius: 2px; overflow: hidden;
+  }
+  .panel > .ph {
+    background: linear-gradient(180deg, var(--hdr1), var(--hdr2));
+    color: #fff; font-weight: 700; font-size: 11px; padding: .25rem .5rem;
+    display: flex; align-items: center; gap: .4rem;
+    border-bottom: 1px solid #2f5d8c; text-shadow: 0 1px 0 rgba(0,0,0,.25);
+  }
+  .panel > .ph .dot { width: 7px; height: 7px; background: #bfe0ff; border-radius: 50%; box-shadow: inset 0 0 0 1px #fff8; }
+  .panel .pb { padding: 0; }
+  table.g { width: 100%; border-collapse: collapse; }
+  table.g th, table.g td { text-align: left; padding: .2rem .45rem; border-bottom: 1px solid #e6eaef; }
+  table.g th {
+    background: #eef2f7; color: #54657a; font-weight: 700; font-size: 10px;
+    border-bottom: 1px solid #d3dbe4;
+  }
+  table.g tr:nth-child(even) td { background: #f7f9fb; }
+  .empty td { color: #9aa6b2; font-style: italic; padding: .55rem .5rem; background: #fff !important; }
+  .freebox { padding: .45rem .5rem; min-height: 32px; color: #1d2630; }
+  .freebox.empty-note { color: #9aa6b2; font-style: italic; }
+  .pill { font-weight: 700; }
+  .pill.active { color: var(--alert); }
+  .pill.resolved { color:#1e6b30; }
+  .pill.pending { color:#876b00; }
+
+  /* ---- Status bar ---- */
+  .statusbar {
+    background: linear-gradient(180deg,#e9ecdd,#d3d8c4); border-top: 1px solid #b6bea8;
+    color: #44503a; font-size: 10px; padding: .2rem .6rem; display: flex; gap: 1rem;
+  }
+  .statusbar .spacer { flex: 1; }
+  .em { color:#9aa6b2; }
+</style>
+{% block head_extra %}{% endblock %}
+</head>
+<body>
+  <div class="app-top">
+    <span class="brand">Medi<b>Snap</b></span>
+    <span class="product">PrimeChart&nbsp;— Community Clinic LMIC&nbsp;— PRMTEST</span>
+    <span class="spacer"></span>
+    <span class="who">{{ patient.provider or 'Dr. (signed in)' }}</span>
+  </div>
+
+  <nav class="modbar">
+    <a class="on" href="#">Chart</a>
+    <a href="#">Registration</a>
+    <a href="#">Reporting</a>
+    <a href="#">Schedule</a>
+    <a href="#">System</a>
+    <a href="#">Help</a>
+  </nav>
+
+  <div class="toolbar">
+    <span class="crumb">Patient Charts</span>
+    {% block toolbar %}{% endblock %}
+    <span class="spacer"></span>
+    <span class="clock" id="clock"></span>
+  </div>
+
+  <div class="ptstrip">
+    <div class="pt">
+      <span class="nm">{{ patient.name or 'No patient data' }}</span>
+      {% if patient.age or patient.sex %}
+      <span class="meta">{{ patient.sex }}{% if patient.sex and patient.age %} · {% endif %}{% if patient.age %}{{ patient.age }}y{% endif %}</span>
+      {% endif %}
+      {% if patient.dob %}<span class="meta">DOB {{ patient.dob }}</span>{% endif %}
+      {% if patient.mrn %}<span class="meta">{{ patient.mrn }}</span>{% endif %}
+      {% if patient.allergies %}
+      <span class="allergy">⚠ {{ patient.allergies|map(attribute='allergen')|join(', ') }}</span>
+      {% endif %}
+    </div>
+    <div class="tabs">
+      <a href="/facesheet" class="{{ 'on' if active=='facesheet' }}">Facesheet</a>
+      <a href="/note" class="{{ 'on' if active=='note' }}">Medical Note</a>
+    </div>
+  </div>
+
+  <div class="shell">
+    <aside class="actions">
+      <h4>Actions</h4>
+      <a href="#">Open Orders / Tracking</a>
+      <a href="#">Open Patient List</a>
+      <a href="#">Open Document</a>
+      <a href="#">Print Snapshot</a>
+      <a href="#">Reconcile Medication</a>
+      <a href="#">Patient Education</a>
+      <a href="#">Data Share</a>
+    </aside>
+    <main class="content">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+  <div class="statusbar">
+    <span>{{ patient.name or 'No patient selected' }}{% if patient.mrn %} [{{ patient.mrn }}]{% endif %}</span>
+    <span class="spacer"></span>
+    <span>OCR: ready</span>
+    <span>Connected</span>
+  </div>
+
+<script>
+  (function () {
+    const el = document.getElementById('clock');
+    function tick() {
+      const d = new Date();
+      el.textContent = d.toLocaleDateString(undefined,
+        { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+        + '   ' + d.toLocaleTimeString();
+    }
+    tick(); setInterval(tick, 1000);
+  })();
+</script>
+{% block body_extra %}{% endblock %}
+</body>
+</html>

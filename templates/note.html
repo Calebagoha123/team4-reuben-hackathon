@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% block title %}Medical Note{% endblock %}
+{% block head_extra %}
+<style>
+  .doc {
+    background:#fff; border:1px solid var(--panel-bd); box-shadow: inset 0 0 0 1px #fff;
+    border-radius:2px; max-width: 920px;
+  }
+  .doc .ph2 {
+    background: linear-gradient(180deg, var(--hdr1), var(--hdr2)); color:#fff; font-weight:700;
+    padding:.3rem .55rem; border-bottom:1px solid #2f5d8c; display:flex; align-items:center; gap:.5rem;
+  }
+  .doc .ph2 .spacer { flex:1; }
+  .doc .ph2 .scanlabel { font-weight:400; font-size:10px; color:#dbeaff; }
+
+  .ptinfo {
+    display:grid; grid-template-columns: repeat(4, 1fr); gap:.1rem;
+    border-bottom:1px solid #d3dbe4; background:#f3f6fa;
+  }
+  .ptinfo div { padding:.3rem .5rem; border-right:1px solid #e2e8f0; }
+  .ptinfo .k { display:block; font-size:9px; text-transform:uppercase; letter-spacing:.4px; color:#6b7a8d; }
+  .ptinfo .v { color:#1d2630; }
+  .ptinfo .v.em { color:#9aa6b2; font-style:italic; }
+
+  form.note { padding:.7rem .8rem; }
+  .field { margin-bottom:.6rem; }
+  .field label { display:block; font-weight:700; color:#33485e; margin-bottom:.15rem; }
+  .field input, .field textarea {
+    width:100%; border:1px solid #9fb0c2; border-radius:2px; padding:.32rem .4rem;
+    font:inherit; background:#fff; box-shadow: inset 1px 1px 0 #e7edf3;
+  }
+  .field input:focus, .field textarea:focus { outline:0; border-color:#5d92c9; background:#fcffff; }
+  .field textarea { min-height:54px; resize:vertical; }
+  .formbar { padding:.5rem .8rem; border-top:1px solid #e2e8f0; background:#f3f6fa; }
+  .btn {
+    border:1px solid #7f8e74; border-radius:2px; padding:.32rem .8rem; cursor:pointer; font:inherit;
+    background:linear-gradient(180deg,#fbfcf9,#dde4d4); color:#2f4a2a; font-weight:700;
+  }
+  .btn:hover { background:linear-gradient(180deg,#fff,#e8eede); }
+
+  /* scanned output */
+  .scanned { margin-top:.6rem; max-width:920px; display:none; }
+  .scanned.show { display:block; }
+  .scanned .ph2 { background:linear-gradient(180deg,#4f9a55,#377a3d); border-bottom-color:#2c5e30; }
+  .scanned pre {
+    margin:0; padding:.6rem .7rem; white-space:pre-wrap; font-family:"Lucida Console",Consolas,monospace;
+    font-size:11px; line-height:1.5; max-height:300px; overflow:auto; background:#fff;
+  }
+
+  /* modal */
+  .overlay { position:fixed; inset:0; background:rgba(20,28,18,.5); display:none;
+    align-items:center; justify-content:center; z-index:50; }
+  .overlay.show { display:flex; }
+  .modal { width:360px; max-width:92vw; background:#ece9d8; border:1px solid #8a9a7e;
+    box-shadow:0 12px 40px rgba(0,0,0,.35); border-radius:3px; }
+  .modal .tt { background:linear-gradient(180deg,#5d92c9,#3f74ad); color:#fff; font-weight:700;
+    padding:.3rem .6rem; display:flex; align-items:center; }
+  .modal .tt .x { margin-left:auto; cursor:pointer; padding:0 .3rem; }
+  .modal .bd { padding:1rem; text-align:center; }
+  .modal p.sub { margin:.1rem 0 .8rem; color:#4b5546; font-size:10px; }
+  .modal img.qr { width:210px; height:210px; background:#fff; border:1px solid #b9c4ad; padding:6px; }
+  .modal .url { font-size:9px; color:#6b7363; word-break:break-all; margin:.5rem 0; }
+  .modal .status { margin-top:.5rem; font-weight:700; min-height:1.3rem; }
+  .modal .status.waiting { color:#876b00; }
+  .modal .status.processing { color:#2c4f8a; }
+  .modal .status.done { color:#1e6b30; }
+  .modal .status.error { color:var(--alert); }
+  .spinner { display:inline-block; width:12px; height:12px; border:2px solid #b9c4d2;
+    border-top-color:#2c4f8a; border-radius:50%; animation:spin .8s linear infinite;
+    vertical-align:middle; margin-right:.35rem; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .modal .mbtn { margin-top:.7rem; border:1px solid #9aa790; border-radius:2px; padding:.3rem .9rem;
+    background:linear-gradient(180deg,#fbfcf9,#dde4d4); cursor:pointer; font:inherit; }
+</style>
+{% endblock %}
+
+{% block toolbar %}
+<button class="iconbtn" id="scanBtn" title="Scan handwritten note">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M3 7h3.2l1.3-2h9l1.3 2H21a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z"/>
+    <circle cx="12" cy="13" r="3.6"/>
+  </svg>
+</button>
+{% endblock %}
+
+{% block content %}
+<div class="doc">
+  <div class="ph2">
+    Progress Note — Outpatient
+    <span class="spacer"></span>
+    <span class="scanlabel">Use the camera icon above to scan a handwritten note</span>
+  </div>
+
+  <div class="ptinfo">
+    <div><span class="k">Patient</span><span class="v {{ '' if patient.name else 'em' }}">{{ patient.name or '—' }}</span></div>
+    <div><span class="k">ID</span><span class="v {{ '' if patient.mrn else 'em' }}">{{ patient.mrn or '—' }}</span></div>
+    <div><span class="k">DOB</span><span class="v {{ '' if patient.dob else 'em' }}">{{ patient.dob or '—' }}</span></div>
+    <div><span class="k">Sex</span><span class="v {{ '' if patient.sex else 'em' }}">{{ patient.sex or '—' }}</span></div>
+    <div><span class="k">Visit Date</span><span class="v">{{ today }}</span></div>
+    <div><span class="k">Provider</span><span class="v {{ '' if patient.provider else 'em' }}">{{ patient.provider or '—' }}</span></div>
+    <div><span class="k">Location</span><span class="v {{ '' if patient.location else 'em' }}">{{ patient.location or '—' }}</span></div>
+    <div><span class="k">Note Type</span><span class="v em">—</span></div>
+  </div>
+
+  <form class="note" onsubmit="return false;">
+    {% for key, label, kind in fields %}
+    <div class="field">
+      <label for="f_{{ key }}">{{ label }}</label>
+      {% if kind == 'input' %}
+      <input id="f_{{ key }}" name="{{ key }}" autocomplete="off">
+      {% else %}
+      <textarea id="f_{{ key }}" name="{{ key }}"></textarea>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </form>
+
+  <div class="formbar"><button class="btn">Save note</button></div>
+</div>
+
+<div class="scanned" id="scanned">
+  <div class="ph2">Scanned text (from photo)</div>
+  <pre id="scannedText"></pre>
+</div>
+
+<!-- Scan modal -->
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <div class="tt">Scan with your phone <span class="x" id="closeScan">✕</span></div>
+    <div class="bd">
+      <p class="sub">Point your phone camera at this code, open the link, and photograph the note.</p>
+      <img class="qr" id="qrImg" alt="QR code">
+      <div class="url" id="mobileUrl"></div>
+      <div class="status waiting" id="scanStatus">Waiting for phone…</div>
+      <div><button class="mbtn" id="cancelScan">Cancel</button></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block body_extra %}
+<script>
+const scanBtn = document.getElementById('scanBtn');
+const overlay = document.getElementById('overlay');
+const closeScan = document.getElementById('closeScan');
+const cancelScan = document.getElementById('cancelScan');
+const qrImg = document.getElementById('qrImg');
+const mobileUrl = document.getElementById('mobileUrl');
+const statusEl = document.getElementById('scanStatus');
+const scanned = document.getElementById('scanned');
+const scannedText = document.getElementById('scannedText');
+
+let pollTimer = null;
+let sessionId = null;
+
+function setStatus(cls, html) { statusEl.className = 'status ' + cls; statusEl.innerHTML = html; }
+function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+
+async function startScan() {
+  scanned.classList.remove('show');
+  overlay.classList.add('show');
+  setStatus('waiting', 'Creating session…');
+  try {
+    const r = await fetch('/api/scan/session', { method: 'POST' });
+    const data = await r.json();
+    sessionId = data.id;
+    qrImg.src = data.qr;
+    mobileUrl.textContent = data.mobile_url;
+    setStatus('waiting', 'Waiting for phone…');
+    pollTimer = setInterval(poll, 1500);
+  } catch (e) { setStatus('error', 'Could not start scan: ' + e.message); }
+}
+
+async function poll() {
+  if (!sessionId) return;
+  try {
+    const r = await fetch('/api/scan/session/' + sessionId);
+    const data = await r.json();
+    if (data.status === 'uploaded' || data.status === 'processing') {
+      setStatus('processing', '<span class="spinner"></span>Reading the photo…');
+    } else if (data.status === 'done') {
+      stopPolling();
+      setStatus('done', '✓ Done');
+      scannedText.textContent = data.text || '(no text found)';
+      scanned.classList.add('show');
+      setTimeout(() => overlay.classList.remove('show'), 700);
+    } else if (data.status === 'error') {
+      stopPolling();
+      setStatus('error', 'Error: ' + (data.error || 'unknown'));
+    }
+  } catch (e) { setStatus('error', 'Lost connection: ' + e.message); }
+}
+
+function close() { stopPolling(); overlay.classList.remove('show'); }
+scanBtn.addEventListener('click', startScan);
+closeScan.addEventListener('click', close);
+cancelScan.addEventListener('click', close);
+</script>
+{% endblock %}

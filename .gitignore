@@ -1,0 +1,22 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+
+# Model / HF caches
+.cache/
+hf-cache/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
