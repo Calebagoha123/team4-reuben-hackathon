@@ -1,4 +1,4 @@
-# MediSnap
+# depaperfiy
 
 **Photograph a handwritten note or a printed lab report, and it lands in the patient's chart — structured, in seconds.**
 
