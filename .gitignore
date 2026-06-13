@@ -15,6 +15,12 @@ dist/
 .cache/
 hf-cache/
 
+# Eval artifacts (generated). Keep the folder structure, not the contents.
+eval/images/*
+!eval/images/.gitkeep
+eval/refs/
+eval/runs/
+
 # OS / editor
 .DS_Store
 .idea/

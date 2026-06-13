@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MediSnap — Extraction Eval</title>
+<style>
+  :root {
+    --green-dk:#2f5e2a; --green:#3f7c37; --ink:#1d2630; --alert:#b3110d;
+    --hdr1:#5d92c9; --hdr2:#3f74ad; --panel-bd:#7f97b2; --ok:#1e6b30; --warn:#876b00;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:Tahoma,Verdana,"Segoe UI",sans-serif; font-size:12px;
+    color:var(--ink); background:#eef0e7; }
+  a { color:#2c4f8a; text-decoration:none; }
+  a:hover { text-decoration:underline; }
+  .app-top { background:linear-gradient(180deg,var(--green),var(--green-dk)); color:#eef6ea;
+    display:flex; align-items:center; gap:.6rem; padding:.4rem .8rem; }
+  .app-top .brand { font-weight:700; font-size:15px; } .app-top .brand b { color:#bfe6a8; }
+  .app-top .product { color:#cfe6c6; font-size:11px; }
+  main { padding:1rem 1.2rem; max-width:1000px; }
+  h1 { font-size:16px; margin:.2rem 0 1rem; }
+  .run { background:#fff; border:1px solid var(--panel-bd); border-radius:3px; margin-bottom:1rem; overflow:hidden; }
+  .run > .ph { background:linear-gradient(180deg,var(--hdr1),var(--hdr2)); color:#fff;
+    font-weight:700; padding:.4rem .7rem; display:flex; align-items:center; gap:.6rem; }
+  .run > .ph .spacer { flex:1; }
+  .run > .bd { padding:.7rem .8rem; }
+  .cards { display:flex; flex-wrap:wrap; gap:.5rem; margin-bottom:.7rem; }
+  .card { background:#f3f6fa; border:1px solid #d3dbe4; border-radius:3px; padding:.4rem .7rem; min-width:120px; }
+  .card .k { font-size:9px; text-transform:uppercase; letter-spacing:.4px; color:#6b7a8d; }
+  .card .v { font-size:18px; font-weight:700; }
+  .card.bad .v { color:var(--alert); } .card.good .v { color:var(--ok); }
+  .imgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:.4rem; }
+  .imgcell { border:1px solid #cdd6c4; border-radius:3px; background:#fafbf7; padding:.4rem .5rem; }
+  .imgcell .nm { font-weight:700; word-break:break-all; }
+  .imgcell .acc { color:#54657a; }
+  .muted { color:#7a8772; }
+  .hint { color:#54657a; font-size:11px; margin:.3rem 0 1rem; }
+  code { background:#eef2f7; padding:.05rem .3rem; border-radius:2px; }
+</style>
+</head>
+<body>
+  <div class="app-top">
+    <span class="brand">Medi<b>Snap</b></span>
+    <span class="product">Extraction Eval — 4B fields judged by 27B</span>
+  </div>
+  <main>
+    <h1>Field-extraction evaluation</h1>
+    {% if not runs %}
+      <p class="hint">No eval runs yet. On the VM:
+      <code>uv run --no-sync python eval_pipeline.py run</code> after dropping note photos in
+      <code>eval/images/</code>.</p>
+    {% endif %}
+    {% for run in runs %}
+    <div class="run">
+      <div class="ph">
+        <span>Run {{ run.id }}</span>
+        <span class="spacer"></span>
+        <span>{{ run.n }} note{{ '' if run.n == 1 else 's' }}</span>
+      </div>
+      <div class="bd">
+        {% if run.summary %}
+        {% set s = run.summary %}
+        <div class="cards">
+          <div class="card good"><div class="k">Accuracy</div><div class="v">{{ '%.0f' % (s.accuracy*100) if s.accuracy is not none else '—' }}%</div></div>
+          <div class="card"><div class="k">Precision</div><div class="v">{{ '%.0f' % (s.precision*100) if s.precision is not none else '—' }}%</div></div>
+          <div class="card"><div class="k">Recall</div><div class="v">{{ '%.0f' % (s.recall*100) if s.recall is not none else '—' }}%</div></div>
+          <div class="card bad"><div class="k">Hallucination</div><div class="v">{{ '%.0f' % (s.hallucination_rate*100) if s.hallucination_rate is not none else '—' }}%</div></div>
+          <div class="card bad"><div class="k">Mis-route</div><div class="v">{{ '%.0f' % (s.misroute_rate*100) if s.misroute_rate is not none else '—' }}%</div></div>
+          <div class="card"><div class="k">Judge↔Human</div><div class="v">{{ '%.0f' % (s.judge_human_agreement*100) if s.judge_human_agreement is not none else '—' }}%</div></div>
+        </div>
+        <p class="hint">Accuracy counts correctly-empty fields too — read it alongside the
+        hallucination / mis-route rates (the over-population &amp; PE→ROS problems).
+        Judge↔Human is over {{ s.human_reviewed_fields }} clinician-reviewed field(s).</p>
+        <div class="imgrid">
+          {% for pi in s.per_image %}
+          <a class="imgcell" href="/eval/{{ run.id }}/{{ loop.index0 }}">
+            <div class="nm">{{ pi.image }}</div>
+            <div class="acc">{{ pi.correct }}/{{ pi.total }} correct · {{ '%.0f' % (pi.accuracy*100) }}%</div>
+          </a>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="muted">Not judged yet.</p>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </main>
+</body>
+</html>

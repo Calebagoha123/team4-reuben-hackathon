@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eval — {{ image }}</title>
+<style>
+  :root {
+    --green-dk:#2f5e2a; --green:#3f7c37; --ink:#1d2630; --alert:#b3110d;
+    --hdr1:#5d92c9; --hdr2:#3f74ad; --panel-bd:#7f97b2; --ok:#1e6b30; --warn:#876b00;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:Tahoma,Verdana,"Segoe UI",sans-serif; font-size:12px;
+    color:var(--ink); background:#eef0e7; }
+  a { color:#2c4f8a; text-decoration:none; } a:hover { text-decoration:underline; }
+  .app-top { background:linear-gradient(180deg,var(--green),var(--green-dk)); color:#eef6ea;
+    display:flex; align-items:center; gap:.6rem; padding:.4rem .8rem; }
+  .app-top .brand { font-weight:700; font-size:15px; } .app-top .brand b { color:#bfe6a8; }
+  .navbar { background:#e7eee1; border-bottom:1px solid #b9c4ad; padding:.35rem .8rem;
+    display:flex; align-items:center; gap:.8rem; }
+  .navbar .crumb { font-weight:700; color:#33502d; }
+  .navbar .spacer { flex:1; }
+  .navbar .agree { color:#54657a; }
+  .navbar a.nav { padding:.2rem .6rem; border:1px solid #9aa790; border-radius:2px;
+    background:linear-gradient(180deg,#fbfcf9,#dde4d4); color:#2f4a2a; font-weight:700; }
+  .navbar a.nav.off { opacity:.4; pointer-events:none; }
+  .wrap { display:grid; grid-template-columns:minmax(280px,1fr) 1.4fr; gap:.7rem; padding:.7rem .8rem; align-items:start; }
+  .panel { background:#fff; border:1px solid var(--panel-bd); border-radius:3px; overflow:hidden; }
+  .panel > .ph { background:linear-gradient(180deg,var(--hdr1),var(--hdr2)); color:#fff;
+    font-weight:700; padding:.3rem .6rem; }
+  .panel .bd { padding:.5rem .6rem; }
+  .noteimg { width:100%; display:block; border:0; }
+  .ref { white-space:pre-wrap; font-family:"Lucida Console",Consolas,monospace; font-size:11px;
+    line-height:1.5; max-height:340px; overflow:auto; }
+  .leftcol { position:sticky; top:.7rem; display:flex; flex-direction:column; gap:.7rem; }
+
+  .field { border:1px solid #d8e0ea; border-radius:3px; margin-bottom:.5rem;
+    overflow:hidden; background:#fff; }
+  .field.wrong { border-color:var(--alert); box-shadow:0 0 0 1px var(--alert) inset; }
+  .field .fh { display:flex; align-items:center; gap:.5rem; padding:.3rem .5rem; background:#f3f6fa;
+    border-bottom:1px solid #e2e8f0; }
+  .field.wrong .fh { background:#fbe9e8; }
+  .field .fh .label { font-weight:700; color:#33485e; }
+  .field .fh .spacer { flex:1; }
+  .field .val { padding:.4rem .55rem; white-space:pre-wrap; min-height:1.3rem; }
+  .field .val.empty { color:#9aa6b2; font-style:italic; }
+  .field .reason { padding:.1rem .55rem .35rem; color:#6b5a32; font-style:italic; }
+
+  .badge { font-size:10px; font-weight:700; padding:.08rem .4rem; border-radius:10px; text-transform:uppercase;
+    letter-spacing:.3px; color:#fff; }
+  .b-correct { background:var(--ok); } .b-hallucinated { background:var(--alert); }
+  .b-misrouted { background:#c2570a; } .b-wrong_content { background:#a8420a; }
+  .b-missing { background:var(--warn); } .b-uncertain { background:#6b7a8d; }
+
+  .review { display:flex; align-items:center; gap:.4rem; padding:.35rem .55rem; border-top:1px dashed #e2e8f0; }
+  .review .lbl { color:#54657a; }
+  .review button { border:1px solid #9aa790; border-radius:2px; padding:.15rem .55rem; cursor:pointer;
+    background:linear-gradient(180deg,#fbfcf9,#dde4d4); font:inherit; font-weight:700; color:#2f4a2a; }
+  .review button.on { background:var(--ok); color:#fff; border-color:var(--ok); }
+  .review select { font:inherit; padding:.1rem; }
+  .review .hset { color:var(--ok); font-weight:700; }
+</style>
+</head>
+<body>
+  <div class="app-top"><span class="brand">Medi<b>Snap</b></span>
+    <span style="color:#cfe6c6;font-size:11px;">Extraction Eval</span></div>
+  <div class="navbar">
+    <span class="crumb"><a href="/eval/{{ run_id }}">Run {{ run_id }}</a></span>
+    <span>· {{ image }} ({{ idx + 1 }}/{{ n }}){% if img_acc is not none %} · {{ '%.0f' % (img_acc*100) }}% correct{% endif %}</span>
+    <span class="spacer"></span>
+    <span class="agree" id="agree"></span>
+    <a class="nav {{ 'off' if prev is none }}" href="{{ '/eval/%s/%s' % (run_id, prev) if prev is not none else '#' }}">‹ Prev</a>
+    <a class="nav {{ 'off' if next is none }}" href="{{ '/eval/%s/%s' % (run_id, next) if next is not none else '#' }}">Next ›</a>
+  </div>
+
+  <div class="wrap">
+    <div class="leftcol">
+      <div class="panel">
+        <div class="ph">Note photo</div>
+        <img class="noteimg" src="/eval/{{ run_id }}/{{ idx }}/image" alt="{{ image }}">
+      </div>
+      <div class="panel">
+        <div class="ph">Trusted transcript (reference)</div>
+        <div class="bd"><div class="ref">{{ reference or '(no reference transcript)' }}</div></div>
+      </div>
+    </div>
+
+    <div>
+      {% for r in rows %}
+      <div class="field {{ 'wrong' if r.wrong }}" data-field="{{ r.key }}">
+        <div class="fh">
+          <span class="label">{{ r.label }}</span>
+          <span class="spacer"></span>
+          <span class="badge b-{{ r.verdict }}">{{ r.verdict }}</span>
+        </div>
+        <div class="val {{ 'empty' if not r.value }}">{{ r.value or '(empty)' }}</div>
+        {% if r.reason %}<div class="reason">judge: {{ r.reason }}</div>{% endif %}
+        <div class="review">
+          <span class="lbl">Clinician:</span>
+          <button class="agreebtn {{ 'on' if r.human == r.verdict }}" data-verdict="{{ r.verdict }}">✓ Agree</button>
+          <select class="override">
+            <option value="">— override —</option>
+            {% for v in human_verdicts %}
+            <option value="{{ v }}" {{ 'selected' if r.human and r.human != r.verdict and r.human == v }}>{{ v }}</option>
+            {% endfor %}
+          </select>
+          <span class="hset">{% if r.human %}✓ recorded: {{ r.human }}{% endif %}</span>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+<script>
+const RUN = {{ run_id | tojson }}, IDX = {{ idx }};
+const agreeEl = document.getElementById('agree');
+
+async function save(field, verdict, row) {
+  const r = await fetch(`/api/eval/${RUN}/${IDX}/review`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({field, verdict}),
+  });
+  const data = await r.json();
+  const a = data.judge_human_agreement;
+  agreeEl.textContent = data.human_reviewed_fields
+    ? `Judge↔Human ${a === null ? '—' : Math.round(a*100)+'%'} (${data.human_reviewed_fields} reviewed)` : '';
+  const hset = row.querySelector('.hset');
+  hset.textContent = verdict ? `✓ recorded: ${verdict}` : '';
+}
+
+document.querySelectorAll('.field').forEach(row => {
+  const field = row.dataset.field;
+  const btn = row.querySelector('.agreebtn');
+  const sel = row.querySelector('.override');
+  btn.addEventListener('click', () => {
+    sel.value = '';
+    btn.classList.add('on');
+    save(field, btn.dataset.verdict, row);
+  });
+  sel.addEventListener('change', () => {
+    btn.classList.remove('on');
+    save(field, sel.value, row);
+  });
+});
+</script>
+</body>
+</html>

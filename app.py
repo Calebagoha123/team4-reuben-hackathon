@@ -34,6 +34,7 @@ import qrcode
 
 import ocr
 from data import NOTE_FIELDS, PATIENT
+from eval_ui import router as eval_router
 
 
 @asynccontextmanager
@@ -46,6 +47,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="MediSnap EHR", lifespan=lifespan)
 templates = Jinja2Templates(directory="templates")
+
+# Field-extraction eval review UI (reads eval/runs/*; loads no model itself).
+app.include_router(eval_router)
 
 # session_id -> {status, text, error, created}
 # status: waiting -> uploaded -> processing -> done | error
