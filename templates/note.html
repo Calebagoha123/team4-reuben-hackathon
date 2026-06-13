@@ -75,6 +75,34 @@
   @keyframes spin { to { transform:rotate(360deg); } }
   .modal .mbtn { margin-top:.7rem; border:1px solid #9aa790; border-radius:2px; padding:.3rem .9rem;
     background:linear-gradient(180deg,#fbfcf9,#dde4d4); cursor:pointer; font:inherit; }
+
+  /* type + mode segmented controls */
+  .segrow { display:flex; gap:.5rem; justify-content:center; flex-wrap:wrap; margin-bottom:.3rem; }
+  .seg { display:inline-flex; border:1px solid #8a9a7e; border-radius:3px; overflow:hidden; }
+  .segbtn { border:0; background:#e3e7d2; color:#4d5a43; padding:.3rem .7rem; cursor:pointer; font:inherit; font-weight:700; }
+  .segbtn + .segbtn { border-left:1px solid #8a9a7e; }
+  .segbtn.on { background:linear-gradient(180deg,#5d92c9,#3f74ad); color:#fff; }
+
+  /* cross-tab handoff banner */
+  .crosslink {
+    display:none; max-width:920px; margin:0 0 .5rem; padding:.45rem .7rem; border-radius:3px;
+    background:#fffbe6; border:1px solid #e0b400; color:#6b5300; font-weight:700; cursor:pointer;
+  }
+  .crosslink.show { display:block; }
+  .crosslink:hover { background:#fff6cc; }
+
+  /* batch record rows */
+  #batchList { background:#fff; }
+  .brow { display:flex; align-items:center; gap:.6rem; padding:.35rem .6rem; border-bottom:1px solid #e6eaef; cursor:pointer; }
+  .brow:hover { background:#f1f6fb; }
+  .brow.on { background:#fffbe6; }
+  .brow .idx { width:20px; height:20px; flex-shrink:0; border-radius:50%; background:#3f74ad; color:#fff;
+    font-weight:700; display:flex; align-items:center; justify-content:center; font-size:10px; }
+  .brow .who { font-weight:700; color:#33485e; }
+  .brow .sub2 { color:#6b7a8d; }
+  .brow .badge { margin-left:auto; font-size:9px; padding:.1rem .4rem; border-radius:2px; }
+  .brow .badge.match { background:#dff1e1; color:#1e6b30; }
+  .brow .badge.nomatch { background:#fde8e7; color:var(--alert); }
 </style>
 {% endblock %}
 
@@ -89,6 +117,8 @@
 {% endblock %}
 
 {% block content %}
+<a class="crosslink" id="crosslink" href="/labs"></a>
+
 <div class="doc">
   <div class="ph2">
     Progress Note — Outpatient
@@ -97,14 +127,14 @@
   </div>
 
   <div class="ptinfo">
-    <div><span class="k">Patient</span><span class="v {{ '' if patient.name else 'em' }}">{{ patient.name or '—' }}</span></div>
-    <div><span class="k">ID</span><span class="v {{ '' if patient.mrn else 'em' }}">{{ patient.mrn or '—' }}</span></div>
-    <div><span class="k">DOB</span><span class="v {{ '' if patient.dob else 'em' }}">{{ patient.dob or '—' }}</span></div>
-    <div><span class="k">Sex</span><span class="v {{ '' if patient.sex else 'em' }}">{{ patient.sex or '—' }}</span></div>
+    <div><span class="k">Patient</span><span class="v {{ '' if patient.name else 'em' }}" id="h_name">{{ patient.name or '—' }}</span></div>
+    <div><span class="k">ID</span><span class="v {{ '' if patient.mrn else 'em' }}" id="h_mrn">{{ patient.mrn or '—' }}</span></div>
+    <div><span class="k">DOB</span><span class="v {{ '' if patient.dob else 'em' }}" id="h_dob">{{ patient.dob or '—' }}</span></div>
+    <div><span class="k">Sex</span><span class="v {{ '' if patient.sex else 'em' }}" id="h_sex">{{ patient.sex or '—' }}</span></div>
     <div><span class="k">Visit Date</span><span class="v">{{ today }}</span></div>
-    <div><span class="k">Provider</span><span class="v {{ '' if patient.provider else 'em' }}">{{ patient.provider or '—' }}</span></div>
-    <div><span class="k">Location</span><span class="v {{ '' if patient.location else 'em' }}">{{ patient.location or '—' }}</span></div>
-    <div><span class="k">Note Type</span><span class="v em">—</span></div>
+    <div><span class="k">Provider</span><span class="v {{ '' if patient.provider else 'em' }}" id="h_provider">{{ patient.provider or '—' }}</span></div>
+    <div><span class="k">Location</span><span class="v {{ '' if patient.location else 'em' }}" id="h_location">{{ patient.location or '—' }}</span></div>
+    <div><span class="k">Note Type</span><span class="v em" id="h_note_type">—</span></div>
   </div>
 
   <form class="note" onsubmit="return false;">
@@ -123,6 +153,12 @@
   <div class="formbar"><button class="btn">Save note</button></div>
 </div>
 
+<!-- Batch: one row per scanned record; click to load into the form. -->
+<div class="scanned" id="batch">
+  <div class="ph2">Batch — scanned records <span class="spacer"></span><span class="scanlabel" id="batchCount"></span></div>
+  <div id="batchList"></div>
+</div>
+
 <div class="scanned" id="scanned">
   <div class="ph2">Scanned text (from photo)</div>
   <pre id="scannedText"></pre>
@@ -133,7 +169,17 @@
   <div class="modal">
     <div class="tt">Scan with your phone <span class="x" id="closeScan">✕</span></div>
     <div class="bd">
-      <p class="sub">Point your phone camera at this code, open the link, and photograph the note.</p>
+      <div class="segrow">
+        <div class="seg" id="typeSeg" role="group" aria-label="Document type">
+          <button type="button" class="segbtn on" data-type="note">📝 Note</button>
+          <button type="button" class="segbtn" data-type="lab">🧪 Lab report</button>
+        </div>
+        <div class="seg" id="modeSeg" role="group" aria-label="Scan mode">
+          <button type="button" class="segbtn on" data-mode="single">Single</button>
+          <button type="button" class="segbtn" data-mode="batch">Batch</button>
+        </div>
+      </div>
+      <p class="sub" id="modeHint">Photograph one handwritten note; the matching patient is loaded automatically.</p>
       <img class="qr" id="qrImg" alt="QR code">
       <div class="url" id="mobileUrl"></div>
       <div class="status waiting" id="scanStatus">Waiting for phone…</div>
@@ -154,12 +200,71 @@ const mobileUrl = document.getElementById('mobileUrl');
 const statusEl = document.getElementById('scanStatus');
 const scanned = document.getElementById('scanned');
 const scannedText = document.getElementById('scannedText');
+const modeSeg = document.getElementById('modeSeg');
+const typeSeg = document.getElementById('typeSeg');
+const modeHint = document.getElementById('modeHint');
+const batch = document.getElementById('batch');
+const batchList = document.getElementById('batchList');
+const batchCount = document.getElementById('batchCount');
+const crosslink = document.getElementById('crosslink');
 
 let pollTimer = null;
 let sessionId = null;
+let scanMode = 'single';
+let docType = 'note';
 
 function setStatus(cls, html) { statusEl.className = 'status ' + cls; statusEl.innerHTML = html; }
 function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+function esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
+
+function updateHint() {
+  if (scanMode === 'batch') {
+    modeHint.textContent = 'Photograph several pages and tag each Note or Lab on your phone — they route to the right tab.';
+  } else if (docType === 'lab') {
+    modeHint.textContent = 'Photograph a printed lab report; it opens in the Lab Reports tab.';
+  } else {
+    modeHint.textContent = 'Photograph one handwritten note; the matching patient is loaded automatically.';
+  }
+}
+
+// Picking a type or mode rebuilds the session so the QR the phone scans always
+// matches the current choice (otherwise the phone gets stale settings).
+modeSeg.addEventListener('click', (e) => {
+  const btn = e.target.closest('.segbtn');
+  if (!btn) return;
+  scanMode = btn.dataset.mode;
+  [...modeSeg.children].forEach(b => b.classList.toggle('on', b === btn));
+  updateHint();
+  refreshSession();
+});
+
+typeSeg.addEventListener('click', (e) => {
+  const btn = e.target.closest('.segbtn');
+  if (!btn) return;
+  docType = btn.dataset.type;
+  [...typeSeg.children].forEach(b => b.classList.toggle('on', b === btn));
+  updateHint();
+  refreshSession();
+});
+
+function setHeader(id, value) {
+  const el = document.getElementById('h_' + id);
+  if (!el) return;
+  if (value) { el.textContent = value; el.classList.remove('em'); }
+}
+
+// Fill the header strip from the matched DB patient, falling back to whatever
+// identifiers the OCR read if no record matched.
+function fillHeader(record) {
+  const p = record.patient || record.demographics || {};
+  setHeader('name', p.name);
+  setHeader('mrn', p.mrn);
+  setHeader('dob', p.dob);
+  setHeader('sex', p.sex);
+  setHeader('provider', p.provider);
+  setHeader('location', p.location);
+  if (record.fields && record.fields.note_type) setHeader('note_type', record.fields.note_type);
+}
 
 function fillFields(fields) {
   if (!fields) return;
@@ -173,12 +278,87 @@ function fillFields(fields) {
   }
 }
 
-async function startScan() {
+// Load one record (single result or a chosen batch row) into the form + header.
+function applyRecord(record) {
+  fillFields(record.fields);
+  fillHeader(record);
+  scannedText.textContent = record.text || '(no text found)';
+  scanned.classList.add('show');
+}
+
+function recordWho(record) {
+  const p = record.patient || record.demographics || {};
+  return p.name || p.mrn || 'Unidentified';
+}
+
+function renderBatch(records) {
+  batchCount.textContent = records.length + ' record' + (records.length === 1 ? '' : 's');
+  batchList.innerHTML = records.map((rec, i) => {
+    const matched = !!rec.patient;
+    const sub = rec.fields && rec.fields.chief_complaint ? rec.fields.chief_complaint : (rec.text || '').slice(0, 60);
+    const badge = matched
+      ? '<span class="badge match">matched</span>'
+      : '<span class="badge nomatch">no match</span>';
+    return `<div class="brow" data-i="${i}">
+      <span class="idx">${i + 1}</span>
+      <span><span class="who">${esc(recordWho(rec))}</span>
+      <span class="sub2"> — ${esc(sub)}</span></span>${badge}</div>`;
+  }).join('');
+  batch.classList.add('show');
+  batchList.querySelectorAll('.brow').forEach(row => {
+    row.addEventListener('click', () => {
+      batchList.querySelectorAll('.brow').forEach(r => r.classList.remove('on'));
+      row.classList.add('on');
+      applyRecord(records[+row.dataset.i]);
+    });
+  });
+  // Load the first record by default.
+  const first = batchList.querySelector('.brow');
+  if (first) first.click();
+}
+
+// Notes extracted from a scan started on the Lab Reports tab are handed off via
+// localStorage; pick them up when this page loads.
+const HANDOFF_NOTES = 'medisnap.pendingNotes';
+const HANDOFF_LABS = 'medisnap.pendingLabs';
+
+function showCrosslink(n) {
+  crosslink.textContent = `Also extracted ${n} lab report${n === 1 ? '' : 's'} — open Lab Reports →`;
+  crosslink.classList.add('show');
+}
+
+// Route a scan's records: notes go into this form/batch; labs are stashed for
+// the Lab Reports tab.
+function consumeRecords(records) {
+  const notes = records.filter(r => r.doc_type === 'note');
+  const labRecords = records.filter(r => r.doc_type === 'lab');
+  if (notes.length > 1) renderBatch(notes);
+  else if (notes.length === 1) applyRecord(notes[0]);
+  if (labRecords.length) {
+    localStorage.setItem(HANDOFF_LABS, JSON.stringify(labRecords));
+    showCrosslink(labRecords.length);
+  }
+}
+
+function openScan() {
   scanned.classList.remove('show');
+  batch.classList.remove('show');
+  crosslink.classList.remove('show');
   overlay.classList.add('show');
+  refreshSession();
+}
+
+// Create (or recreate) the scan session for the current mode + type and show
+// its QR. Called on open and whenever a toggle changes.
+async function refreshSession() {
+  if (!overlay.classList.contains('show')) return;
+  stopPolling();
   setStatus('waiting', 'Creating session…');
   try {
-    const r = await fetch('/api/scan/session', { method: 'POST' });
+    const r = await fetch('/api/scan/session', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: scanMode, doc_type: docType }),
+    });
     const data = await r.json();
     sessionId = data.id;
     qrImg.src = data.qr;
@@ -198,9 +378,7 @@ async function poll() {
     } else if (data.status === 'done') {
       stopPolling();
       setStatus('done', '✓ Done');
-      scannedText.textContent = data.text || '(no text found)';
-      scanned.classList.add('show');
-      fillFields(data.fields);
+      consumeRecords(data.records || []);
       setTimeout(() => overlay.classList.remove('show'), 700);
     } else if (data.status === 'error') {
       stopPolling();
@@ -210,8 +388,20 @@ async function poll() {
 }
 
 function close() { stopPolling(); overlay.classList.remove('show'); }
-scanBtn.addEventListener('click', startScan);
+scanBtn.addEventListener('click', openScan);
 closeScan.addEventListener('click', close);
 cancelScan.addEventListener('click', close);
+
+// On load: apply any notes handed off from a scan on the Lab Reports tab.
+(function pickupHandoff() {
+  const raw = localStorage.getItem(HANDOFF_NOTES);
+  if (!raw) return;
+  localStorage.removeItem(HANDOFF_NOTES);
+  try {
+    const notes = JSON.parse(raw);
+    if (notes.length > 1) renderBatch(notes);
+    else if (notes.length === 1) applyRecord(notes[0]);
+  } catch (e) { /* ignore malformed handoff */ }
+})();
 </script>
 {% endblock %}

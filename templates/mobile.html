@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Scan note</title>
+<title>Scan document</title>
 <style>
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
@@ -14,31 +14,58 @@
   }
   .topbar { padding: .6rem 1rem; text-align: center; font-weight: 700; background: #0a1019; }
   .topbar small { display: block; font-weight: 400; color: #9fb0c4; font-size: .8rem; }
+  .topbar .pill {
+    display:inline-block; margin-top:.3rem; font-size:.7rem; font-weight:700; letter-spacing:.3px;
+    padding:.12rem .55rem; border-radius:999px; background:#1c3a5e; color:#bcd8f7;
+  }
 
   .stage {
     flex: 1; position: relative; overflow: hidden;
     display: flex; align-items: center; justify-content: center; background: #000;
   }
-  video, #shot {
-    width: 100%; height: 100%; object-fit: cover;
+  video, #view {
+    max-width: 100%; max-height: 100%; object-fit: contain;
   }
-  #shot { display: none; }
+  video { width: 100%; height: 100%; object-fit: cover; }
+  #view { display: none; }
 
   .controls {
     padding: 1rem; display: flex; align-items: center; justify-content: center; gap: 1.5rem;
-    background: #0a1019;
+    background: #0a1019; min-height: 96px;
   }
   .shutter {
     width: 74px; height: 74px; border-radius: 50%; border: 5px solid #fff;
     background: #fff; cursor: pointer; flex-shrink: 0;
   }
   .shutter:active { transform: scale(.92); }
-  .txtbtn {
-    background: none; border: 0; color: #cfe0f2; font-size: 1rem; cursor: pointer;
-    padding: .6rem; font-weight: 600;
-  }
 
-  #msg { text-align: center; padding: .6rem 1rem; min-height: 1.4rem; font-weight: 600; }
+  /* review controls */
+  .review { display:none; flex-direction:column; gap:.7rem; width:100%; align-items:center; }
+  .review.show { display:flex; }
+  .typerow { display:inline-flex; border:1px solid #2a405e; border-radius:999px; overflow:hidden; }
+  .typebtn { border:0; background:#15233a; color:#9fb0c4; padding:.45rem 1rem; font:inherit; font-weight:700; cursor:pointer; }
+  .typebtn + .typebtn { border-left:1px solid #2a405e; }
+  .typebtn.on { background:#2f6fb0; color:#fff; }
+  .rotrow { display:flex; gap:1.6rem; align-items:center; }
+  .iconbtn {
+    width:54px; height:54px; border-radius:50%; border:1px solid #355; background:#15233a;
+    color:#cfe0f2; cursor:pointer; display:flex; align-items:center; justify-content:center;
+  }
+  .iconbtn:active { background:#1d3252; }
+  .iconbtn svg { width:26px; height:26px; }
+  .iconbtn small { font-size:.55rem; }
+  .actrow { display:flex; gap:.8rem; width:100%; max-width:420px; }
+  .btn {
+    flex:1; border:0; border-radius:8px; padding:.85rem 1rem; font:inherit; font-weight:700;
+    font-size:1rem; cursor:pointer;
+  }
+  .btn.primary { background:#2f7d4f; color:#fff; }
+  .btn.primary:active { background:#276b43; }
+  .btn.ghost { background:#1c2a3e; color:#cfe0f2; }
+  .btn.ghost:active { background:#243650; }
+  .hint { color:#7f93aa; font-size:.78rem; }
+
+  #msg { text-align: center; padding: .5rem 1rem; min-height: 1.2rem; font-weight: 600; }
   #msg.err { color: #f87171; }
   #msg.ok { color: #4ade80; }
 
@@ -50,14 +77,33 @@
   .done .check { font-size: 4rem; }
   .done h2 { margin: .5rem 0 0; }
   .done p { color: #9fb0c4; }
+
+  .tray {
+    display:none; gap:.4rem; padding:.5rem 1rem; background:#0a1019; overflow-x:auto;
+    border-top:1px solid #16263c;
+  }
+  .tray.show { display:flex; }
+  .tray .thumbwrap { position:relative; flex-shrink:0; line-height:0; }
+  .tray .thumb {
+    width:46px; height:46px; border-radius:5px; object-fit:cover; border:1px solid #2a405e;
+  }
+  .tray .thumbtag {
+    position:absolute; bottom:-2px; right:-2px; font-size:.8rem;
+    background:#0a1019; border-radius:50%; padding:0 1px;
+  }
+  .tray .count { color:#9fb0c4; font-size:.8rem; align-self:center; white-space:nowrap; }
 </style>
 </head>
 <body>
-  <div class="topbar">Capture handwritten note<small>Frame the page, then tap the shutter</small></div>
+  <div class="topbar">
+    Capture document
+    <small id="subhint">Frame the page, then tap the shutter</small>
+    <span class="pill">{{ 'BATCH' if mode == 'batch' else 'SINGLE' }}</span>
+  </div>
 
   <div class="stage">
     <video id="video" autoplay muted playsinline></video>
-    <canvas id="shot"></canvas>
+    <canvas id="view"></canvas>
     <div class="done" id="done">
       <div class="check">✅</div>
       <h2>Sent</h2>
@@ -65,28 +111,88 @@
     </div>
   </div>
 
+  <div class="tray" id="tray"></div>
   <div id="msg"></div>
 
   <div class="controls" id="controls">
+    <!-- live -->
     <button class="shutter" id="shutter" aria-label="Take photo"></button>
+
+    <!-- review (label / rotate / retake / send) -->
+    <div class="review" id="review">
+      <!-- batch only: tag this page as a note or a lab report -->
+      <div class="typerow" id="typeSeg" role="group" aria-label="This page is a" style="display:none;">
+        <button type="button" class="typebtn" data-type="note">📝 Note</button>
+        <button type="button" class="typebtn" data-type="lab">🧪 Lab report</button>
+      </div>
+      <div class="rotrow">
+        <button class="iconbtn" id="rotL" title="Rotate left">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v5h5"/></svg>
+        </button>
+        <span class="hint">Upside down? Rotate it.</span>
+        <button class="iconbtn" id="rotR" title="Rotate right">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v5h-5"/></svg>
+        </button>
+      </div>
+      <div class="actrow">
+        <button class="btn ghost" id="retake">Retake</button>
+        <button class="btn ghost" id="addMore" style="display:none;">+ Add another</button>
+        <button class="btn primary" id="send">Send</button>
+      </div>
+    </div>
   </div>
 
 <script>
 const sessionId = "{{ session_id }}";
+const MODE = "{{ mode }}";
+const DEFAULT_TYPE = "{{ doc_type }}";   // what the clinician picked on the desktop
+
 const video = document.getElementById('video');
-const canvas = document.getElementById('shot');
+const viewCanvas = document.getElementById('view');
 const shutter = document.getElementById('shutter');
+const review = document.getElementById('review');
+const rotL = document.getElementById('rotL');
+const rotR = document.getElementById('rotR');
+const retakeBtn = document.getElementById('retake');
+const addMoreBtn = document.getElementById('addMore');
+const sendBtn = document.getElementById('send');
 const msg = document.getElementById('msg');
 const done = document.getElementById('done');
-const controls = document.getElementById('controls');
+const tray = document.getElementById('tray');
+const subhint = document.getElementById('subhint');
+const typeSeg = document.getElementById('typeSeg');
+
 let stream = null;
+let rotation = 0;            // degrees, applied before upload
+let baseCanvas = null;       // the raw captured frame
+let pageType = DEFAULT_TYPE; // type for the page on screen
+const shots = [];            // baked pages queued for batch: [{ blob, type }]
+
+if (MODE === 'batch') {
+  addMoreBtn.style.display = '';
+  sendBtn.textContent = 'Send all';
+  subhint.textContent = 'Tag each page Note or Lab, rotate if needed, then Add another or Send all.';
+}
+
+// Per-page label (batch only). In single mode the desktop choice is used as-is.
+function paintType() {
+  [...typeSeg.children].forEach(b => b.classList.toggle('on', b.dataset.type === pageType));
+}
+function resetType() { pageType = DEFAULT_TYPE; paintType(); }
+typeSeg.addEventListener('click', (e) => {
+  const btn = e.target.closest('.typebtn');
+  if (!btn) return;
+  pageType = btn.dataset.type;
+  paintType();
+});
 
 function say(text, cls) { msg.className = cls || ''; msg.textContent = text; }
 
 async function startCamera() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    say('Camera not available in this browser.', 'err');
-    return;
+    say('Camera not available in this browser.', 'err'); return;
   }
   try {
     stream = await navigator.mediaDevices.getUserMedia({
@@ -101,45 +207,117 @@ async function startCamera() {
   }
 }
 
-async function capture() {
+function showLive() {
+  video.style.display = 'block';
+  viewCanvas.style.display = 'none';
+  shutter.style.display = 'block';
+  review.classList.remove('show');
+  say('');
+}
+
+function showReview() {
+  video.style.display = 'none';
+  viewCanvas.style.display = 'block';
+  shutter.style.display = 'none';
+  review.classList.add('show');
+  // Only batch needs per-page labels; single uses the desktop choice.
+  typeSeg.style.display = (MODE === 'batch') ? 'inline-flex' : 'none';
+}
+
+// Draw `src` rotated by `rotation` degrees into `dst` (swapping dims at 90/270).
+function drawRotated(dst, src) {
+  const swap = rotation % 180 !== 0;
+  dst.width = swap ? src.height : src.width;
+  dst.height = swap ? src.width : src.height;
+  const ctx = dst.getContext('2d');
+  ctx.save();
+  ctx.translate(dst.width / 2, dst.height / 2);
+  ctx.rotate(rotation * Math.PI / 180);
+  ctx.drawImage(src, -src.width / 2, -src.height / 2);
+  ctx.restore();
+}
+
+function renderReview() { drawRotated(viewCanvas, baseCanvas); }
+
+function capture() {
   if (!stream) { startCamera(); return; }
   const w = video.videoWidth, h = video.videoHeight;
   if (!w || !h) { say('Camera still warming up — try again.', 'err'); return; }
-
-  // Freeze the current frame onto the canvas (no photo saved to the phone).
-  canvas.width = w; canvas.height = h;
-  canvas.getContext('2d').drawImage(video, 0, 0, w, h);
-  video.style.display = 'none';
-  canvas.style.display = 'block';
-  shutter.disabled = true;
-  say('Sending…');
-
-  canvas.toBlob(async (blob) => {
-    if (!blob) { say('Capture failed — try again.', 'err'); resetToLive(); return; }
-    const body = new FormData();
-    body.append('image', blob, 'note.jpg');
-    try {
-      const r = await fetch('/api/scan/session/' + sessionId + '/upload', { method: 'POST', body });
-      if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || 'upload failed'); }
-      // Stop the camera and show confirmation.
-      if (stream) stream.getTracks().forEach(t => t.stop());
-      controls.style.display = 'none';
-      say('');
-      done.classList.add('show');
-    } catch (e) {
-      say('Error: ' + e.message, 'err');
-      resetToLive();
-    }
-  }, 'image/jpeg', 0.92);
+  baseCanvas = document.createElement('canvas');
+  baseCanvas.width = w; baseCanvas.height = h;
+  baseCanvas.getContext('2d').drawImage(video, 0, 0, w, h);
+  rotation = 0;
+  resetType();
+  renderReview();
+  showReview();
 }
 
-function resetToLive() {
-  canvas.style.display = 'none';
-  video.style.display = 'block';
-  shutter.disabled = false;
+function rotate(deg) {
+  if (!baseCanvas) return;
+  rotation = (rotation + deg + 360) % 360;
+  renderReview();
+}
+
+function bakeBlob() {
+  return new Promise((resolve) => {
+    const out = document.createElement('canvas');
+    drawRotated(out, baseCanvas);
+    out.toBlob((b) => resolve(b), 'image/jpeg', 0.92);
+  });
+}
+
+const TYPE_BADGE = { note: '📝', lab: '🧪' };
+
+function renderTray() {
+  if (!shots.length) { tray.classList.remove('show'); tray.innerHTML = ''; return; }
+  tray.classList.add('show');
+  tray.innerHTML = `<span class="count">${shots.length} page${shots.length === 1 ? '' : 's'} queued</span>` +
+    shots.map(s => `<span class="thumbwrap"><img class="thumb" src="${URL.createObjectURL(s.blob)}">` +
+      `<span class="thumbtag">${TYPE_BADGE[s.type] || ''}</span></span>`).join('');
+}
+
+async function addAnother() {
+  const blob = await bakeBlob();
+  if (blob) { shots.push({ blob, type: pageType }); renderTray(); }
+  baseCanvas = null;
+  showLive();
+}
+
+async function upload(items) {
+  const body = new FormData();
+  items.forEach((s, i) => {
+    body.append('images', s.blob, `page${i}.jpg`);
+    body.append('types', s.type);   // per-page label, parallel to images
+  });
+  const r = await fetch('/api/scan/session/' + sessionId + '/upload', { method: 'POST', body });
+  if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || 'upload failed'); }
+}
+
+async function send() {
+  sendBtn.disabled = true; addMoreBtn.disabled = true;
+  say('Sending…');
+  try {
+    const batch = shots.slice();
+    if (baseCanvas) batch.push({ blob: await bakeBlob(), type: pageType });  // page on screen
+    if (!batch.length) { say('Nothing to send.', 'err'); sendBtn.disabled = false; return; }
+    await upload(batch);
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    document.getElementById('controls').style.display = 'none';
+    tray.classList.remove('show');
+    say('');
+    done.classList.add('show');
+  } catch (e) {
+    say('Error: ' + e.message, 'err');
+    sendBtn.disabled = false; addMoreBtn.disabled = false;
+  }
 }
 
 shutter.addEventListener('click', capture);
+rotL.addEventListener('click', () => rotate(-90));
+rotR.addEventListener('click', () => rotate(90));
+retakeBtn.addEventListener('click', () => { baseCanvas = null; showLive(); });
+addMoreBtn.addEventListener('click', addAnother);
+sendBtn.addEventListener('click', send);
 startCamera();
 </script>
 </body>

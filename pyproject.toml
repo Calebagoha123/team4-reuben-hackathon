@@ -1,7 +1,7 @@
 [project]
-name = "image-text-reader"
+name = "medisnap"
 version = "0.1.0"
-description = "Web tool that reads/analyzes images using the MedGemma vision-language model"
+description = "MediSnap — photograph a handwritten note or printed lab report and it lands in the EHR, structured."
 # torch has no wheels for 3.13+ yet — pin to 3.11/3.12
 requires-python = ">=3.11,<3.13"
 dependencies = [
@@ -10,13 +10,33 @@ dependencies = [
     "python-multipart>=0.0.9",
     "jinja2>=3.1",
     "qrcode>=7.4",
+    "pillow>=10.4",
+    "anthropic>=0.40",
+]
+
+[project.optional-dependencies]
+# The on-device MedGemma path. Heavy (~2GB+ of ML wheels) and only needed when
+# OCR_PROVIDER=medgemma — the cloud/Claude path runs without it.
+#   uv sync --extra medgemma
+medgemma = [
     "transformers>=4.53",
     "torch>=2.4",
     "accelerate>=1.0",
-    "pillow>=10.4",
     "huggingface-hub>=0.26",
-    "anthropic>=0.40",
 ]
 
 [tool.uv]
 package = false
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = [
+    # starlette's TestClient httpx deprecation shim — not our code.
+    "ignore:Using `httpx`",
+]

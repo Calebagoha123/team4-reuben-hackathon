@@ -1,0 +1,370 @@
+{% extends "base.html" %}
+{% block title %}Lab Reports{% endblock %}
+{% block head_extra %}
+<style>
+  .doc {
+    background:#fff; border:1px solid var(--panel-bd); box-shadow: inset 0 0 0 1px #fff;
+    border-radius:2px; max-width: 1040px;
+  }
+  .doc .ph2 {
+    background: linear-gradient(180deg, var(--hdr1), var(--hdr2)); color:#fff; font-weight:700;
+    padding:.3rem .55rem; border-bottom:1px solid #2f5d8c; display:flex; align-items:center; gap:.5rem;
+  }
+  .doc .ph2 .spacer { flex:1; }
+  .doc .ph2 .scanlabel { font-weight:400; font-size:10px; color:#dbeaff; }
+
+  .rmeta {
+    display:flex; flex-wrap:wrap; gap:1.2rem; padding:.4rem .6rem; background:#f3f6fa;
+    border-bottom:1px solid #d3dbe4;
+  }
+  .rmeta .k { font-size:9px; text-transform:uppercase; letter-spacing:.4px; color:#6b7a8d; display:block; }
+  .rmeta .v { color:#1d2630; font-weight:700; }
+  .rmeta .v.em { color:#9aa6b2; font-style:italic; font-weight:400; }
+
+  .nodata {
+    margin:0; padding:2rem 1rem 1rem; text-align:center; color:#8a93a0;
+    background:repeating-linear-gradient(45deg,#f4f5f7,#f4f5f7 10px,#eef0f3 10px,#eef0f3 20px);
+  }
+  .nodata .startbtn { margin-top:.8rem; }
+
+  .results { padding:.4rem .5rem .2rem; }
+  .panelblock { margin-bottom:.8rem; }
+  .panelblock .pname {
+    background:#e7eef7; color:#33485e; font-weight:700; padding:.25rem .5rem;
+    border:1px solid #d3dbe4; border-bottom:0; font-size:11px; display:flex; align-items:center; gap:.5rem;
+  }
+  .panelblock .pname .pnametext:focus { outline:1px dashed #5d92c9; background:#fff; }
+  .panelblock .pname .spacer { flex:1; }
+  .miniadd {
+    border:1px solid #9fb6c9; border-radius:2px; background:#fff; color:#2c4f8a; cursor:pointer;
+    font:inherit; font-size:10px; font-weight:700; padding:.05rem .4rem;
+  }
+  .miniadd:hover { background:#eaf2fb; }
+  table.lab { width:100%; border-collapse:collapse; }
+  table.lab th, table.lab td { text-align:left; padding:.22rem .5rem; border:1px solid #e2e8f0; }
+  table.lab th {
+    background:#eef2f7; color:#54657a; font-weight:700; font-size:10px; white-space:nowrap;
+  }
+  table.lab th .colname:focus { outline:1px dashed #5d92c9; }
+  table.lab td.testname { font-weight:700; color:#33485e; }
+  table.lab tr:nth-child(even) td { background:#f7f9fb; }
+  table.lab td.val { font-variant-numeric:tabular-nums; }
+  table.lab td[contenteditable]:focus { outline:2px solid #5d92c9; background:#fcffff; }
+  .flag { font-weight:700; padding:0 .25rem; border-radius:2px; }
+  .flag.H { color:#fff; background:var(--alert); }
+  .flag.L { color:#fff; background:#2c4f8a; }
+  .flag.C { color:#fff; background:#7a0f0c; }
+  tr.abn td.val { background:#fff4f2 !important; }
+  .toggle {
+    border:1px solid #7f8e74; border-radius:2px; padding:.28rem .7rem; cursor:pointer; font:inherit;
+    background:linear-gradient(180deg,#fbfcf9,#dde4d4); color:#2f4a2a; font-weight:700;
+  }
+  .toggle:hover { background:linear-gradient(180deg,#fff,#e8eede); }
+
+  .crosslink {
+    display:none; max-width:1040px; margin:0 0 .5rem; padding:.45rem .7rem; border-radius:3px;
+    background:#fffbe6; border:1px solid #e0b400; color:#6b5300; font-weight:700; cursor:pointer;
+  }
+  .crosslink.show { display:block; }
+  .crosslink:hover { background:#fff6cc; }
+
+  /* modal */
+  .overlay { position:fixed; inset:0; background:rgba(20,28,18,.5); display:none;
+    align-items:center; justify-content:center; z-index:50; }
+  .overlay.show { display:flex; }
+  .modal { width:360px; max-width:92vw; background:#ece9d8; border:1px solid #8a9a7e;
+    box-shadow:0 12px 40px rgba(0,0,0,.35); border-radius:3px; }
+  .modal .tt { background:linear-gradient(180deg,#5d92c9,#3f74ad); color:#fff; font-weight:700;
+    padding:.3rem .6rem; display:flex; align-items:center; }
+  .modal .tt .x { margin-left:auto; cursor:pointer; padding:0 .3rem; }
+  .modal .bd { padding:1rem; text-align:center; }
+  .modal p.sub { margin:.1rem 0 .8rem; color:#4b5546; font-size:10px; }
+  .modal img.qr { width:210px; height:210px; background:#fff; border:1px solid #b9c4ad; padding:6px; }
+  .modal .url { font-size:9px; color:#6b7363; word-break:break-all; margin:.5rem 0; }
+  .modal .status { margin-top:.5rem; font-weight:700; min-height:1.3rem; }
+  .modal .status.waiting { color:#876b00; }
+  .modal .status.processing { color:#2c4f8a; }
+  .modal .status.done { color:#1e6b30; }
+  .modal .status.error { color:var(--alert); }
+  .spinner { display:inline-block; width:12px; height:12px; border:2px solid #b9c4d2;
+    border-top-color:#2c4f8a; border-radius:50%; animation:spin .8s linear infinite;
+    vertical-align:middle; margin-right:.35rem; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .modal .mbtn { margin-top:.7rem; border:1px solid #9aa790; border-radius:2px; padding:.3rem .9rem;
+    background:linear-gradient(180deg,#fbfcf9,#dde4d4); cursor:pointer; font:inherit; }
+  .segrow { display:flex; gap:.5rem; justify-content:center; flex-wrap:wrap; margin-bottom:.3rem; }
+  .seg { display:inline-flex; border:1px solid #8a9a7e; border-radius:3px; overflow:hidden; }
+  .segbtn { border:0; background:#e3e7d2; color:#4d5a43; padding:.3rem .7rem; cursor:pointer; font:inherit; font-weight:700; }
+  .segbtn + .segbtn { border-left:1px solid #8a9a7e; }
+  .segbtn.on { background:linear-gradient(180deg,#5d92c9,#3f74ad); color:#fff; }
+</style>
+{% endblock %}
+
+{% block toolbar %}
+<button class="iconbtn" id="scanBtn" title="Scan a document">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M3 7h3.2l1.3-2h9l1.3 2H21a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z"/>
+    <circle cx="12" cy="13" r="3.6"/>
+  </svg>
+</button>
+{% endblock %}
+
+{% block content %}
+<a class="crosslink" id="crosslink" href="/note"></a>
+
+<div class="doc">
+  <div class="ph2">
+    Results Review
+    <span class="spacer"></span>
+    <span class="scanlabel">Scan a printed lab report — or build a table by hand</span>
+  </div>
+
+  <div class="rmeta" id="rmeta">
+    <div><span class="k">Report</span><span class="v em">—</span></div>
+    <div><span class="k">Patient</span><span class="v em">—</span></div>
+    <div><span class="k">Collected</span><span class="v em">—</span></div>
+  </div>
+
+  <div id="results">
+    <p class="nodata">
+      No lab data — scan a printed lab report to populate this table.
+      <br><button class="toggle startbtn" id="addFirstRow">+ Add row</button>
+    </p>
+  </div>
+</div>
+
+<!-- Scan modal -->
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <div class="tt">Scan a document <span class="x" id="closeScan">✕</span></div>
+    <div class="bd">
+      <div class="segrow">
+        <div class="seg" id="typeSeg" role="group" aria-label="Document type">
+          <button type="button" class="segbtn" data-type="note">📝 Note</button>
+          <button type="button" class="segbtn on" data-type="lab">🧪 Lab report</button>
+        </div>
+        <div class="seg" id="modeSeg" role="group" aria-label="Scan mode">
+          <button type="button" class="segbtn on" data-mode="single">Single</button>
+          <button type="button" class="segbtn" data-mode="batch">Batch</button>
+        </div>
+      </div>
+      <p class="sub" id="modeHint">Photograph a printed lab report; the table fills in automatically.</p>
+      <img class="qr" id="qrImg" alt="QR code">
+      <div class="url" id="mobileUrl"></div>
+      <div class="status waiting" id="scanStatus">Waiting for phone…</div>
+      <div><button class="mbtn" id="cancelScan">Cancel</button></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block body_extra %}
+<script>
+const scanBtn = document.getElementById('scanBtn');
+const overlay = document.getElementById('overlay');
+const closeScan = document.getElementById('closeScan');
+const cancelScan = document.getElementById('cancelScan');
+const qrImg = document.getElementById('qrImg');
+const mobileUrl = document.getElementById('mobileUrl');
+const statusEl = document.getElementById('scanStatus');
+const resultsEl = document.getElementById('results');
+const rmetaEl = document.getElementById('rmeta');
+const crosslink = document.getElementById('crosslink');
+const modeSeg = document.getElementById('modeSeg');
+const typeSeg = document.getElementById('typeSeg');
+const modeHint = document.getElementById('modeHint');
+const addFirstRow = document.getElementById('addFirstRow');
+
+const HANDOFF_NOTES = 'medisnap.pendingNotes';
+const HANDOFF_LABS = 'medisnap.pendingLabs';
+const DEFAULT_COLS = [['test', 'Test'], ['result', 'Result'], ['unit', 'Unit'], ['ref_range', 'Ref. Range']];
+
+let pollTimer = null, sessionId = null, scanMode = 'single', docType = 'lab';
+
+function setStatus(cls, html) { statusEl.className = 'status ' + cls; statusEl.innerHTML = html; }
+function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+function esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
+function slug(s) { return (s || 'col').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'col'; }
+
+function updateHint() {
+  if (scanMode === 'batch') {
+    modeHint.textContent = 'Photograph several pages and tag each Note or Lab on your phone — they route to the right tab.';
+  } else if (docType === 'note') {
+    modeHint.textContent = 'Photograph a handwritten note; it opens in the Medical Note tab.';
+  } else {
+    modeHint.textContent = 'Photograph a printed lab report; the table fills in automatically.';
+  }
+}
+
+// Picking a type or mode rebuilds the session so the QR always matches.
+modeSeg.addEventListener('click', (e) => {
+  const btn = e.target.closest('.segbtn');
+  if (!btn) return;
+  scanMode = btn.dataset.mode;
+  [...modeSeg.children].forEach(b => b.classList.toggle('on', b === btn));
+  updateHint();
+  refreshSession();
+});
+
+typeSeg.addEventListener('click', (e) => {
+  const btn = e.target.closest('.segbtn');
+  if (!btn) return;
+  docType = btn.dataset.type;
+  [...typeSeg.children].forEach(b => b.classList.toggle('on', b === btn));
+  updateHint();
+  refreshSession();
+});
+
+function metaCell(k, v) {
+  return `<div><span class="k">${k}</span><span class="v${v ? '' : ' em'}">${v ? esc(v) : '—'}</span></div>`;
+}
+
+// ---- rendering (editable) ----
+function panelBlock(panel) {
+  const cols = (panel.keys && panel.keys.length)
+    ? panel.keys.map((k, i) => [k, panel.columns[i]])
+    : DEFAULT_COLS.slice();
+  const head = cols.map(([k, label]) =>
+    `<th data-key="${esc(k)}"><span class="colname" contenteditable>${esc(label)}</span></th>`).join('');
+  const rows = (panel.rows || []).map(row => rowHtml(cols, row)).join('');
+  return `<div class="panelblock" data-name="${esc(panel.name || '')}">
+    <div class="pname"><span class="pnametext" contenteditable>${esc(panel.name || 'Panel')}</span>
+      <span class="spacer"></span>
+      <button class="miniadd addrow">+ Row</button>
+      <button class="miniadd addcol">+ Col</button>
+    </div>
+    <table class="lab"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>
+  </div>`;
+}
+
+function rowHtml(cols, row) {
+  row = row || {};
+  const flag = (row.flag || '').toUpperCase();
+  const abn = (flag === 'H' || flag === 'L' || flag === 'C') ? ' class="abn"' : '';
+  const cells = cols.map(([key], i) => {
+    const v = row[key] || '';
+    if (i === 0) return `<td class="testname" contenteditable>${esc(v)}</td>`;
+    if (key === 'flag' && flag) return `<td class="val"><span class="flag ${flag}">${flag}</span></td>`;
+    return `<td class="val" contenteditable>${esc(v)}</td>`;
+  }).join('');
+  return `<tr${abn}>${cells}</tr>`;
+}
+
+function renderReports(reports) {
+  const first = reports[0] || { patient: {}, panels: [] };
+  const pat = first.patient || {};
+  const who = [pat.name, pat.age ? pat.age + 'y' : '', pat.sex].filter(Boolean).join(' · ');
+  rmetaEl.innerHTML = metaCell('Report', first.title) + metaCell('Patient', who) + metaCell('Collected', first.report_date);
+
+  const panels = reports.flatMap(r => r.panels || []);
+  if (!panels.length) {
+    resultsEl.innerHTML = '<p class="nodata">No structured results could be read from that image.</p>';
+    return;
+  }
+  resultsEl.innerHTML = '<div class="results">' + panels.map(panelBlock).join('') + '</div>';
+}
+
+// ---- editing ----
+resultsEl.addEventListener('click', (e) => {
+  const addRow = e.target.closest('.addrow');
+  const addCol = e.target.closest('.addcol');
+  if (addRow) {
+    const block = addRow.closest('.panelblock');
+    const cols = [...block.querySelectorAll('thead th')].map(th => [th.dataset.key]);
+    block.querySelector('tbody').insertAdjacentHTML('beforeend', rowHtml(cols, {}));
+  } else if (addCol) {
+    const block = addCol.closest('.panelblock');
+    const label = prompt('Column name:', 'New');
+    if (label == null) return;
+    const key = slug(label);
+    block.querySelector('thead tr').insertAdjacentHTML('beforeend',
+      `<th data-key="${esc(key)}"><span class="colname" contenteditable>${esc(label)}</span></th>`);
+    block.querySelectorAll('tbody tr').forEach(tr =>
+      tr.insertAdjacentHTML('beforeend', '<td class="val" contenteditable></td>'));
+  }
+});
+
+function startManualTable() {
+  renderReports([{ patient: {}, panels: [{ name: 'New panel', keys: DEFAULT_COLS.map(c => c[0]),
+    columns: DEFAULT_COLS.map(c => c[1]), rows: [{}] }] }]);
+}
+
+// ---- scan + handoff ----
+function showCrosslink(n) {
+  crosslink.textContent = `Also extracted ${n} note${n === 1 ? '' : 's'} — open Medical Note →`;
+  crosslink.classList.add('show');
+}
+
+function consumeRecords(records) {
+  const labs = records.filter(r => r.doc_type === 'lab').map(r => r.report);
+  const notes = records.filter(r => r.doc_type === 'note');
+  if (labs.length) renderReports(labs);
+  if (notes.length) {
+    localStorage.setItem(HANDOFF_NOTES, JSON.stringify(notes));
+    showCrosslink(notes.length);
+  }
+}
+
+function openScan() {
+  crosslink.classList.remove('show');
+  overlay.classList.add('show');
+  refreshSession();
+}
+
+// Create (or recreate) the scan session for the current mode + type and show
+// its QR. Called on open and whenever a toggle changes.
+async function refreshSession() {
+  if (!overlay.classList.contains('show')) return;
+  stopPolling();
+  setStatus('waiting', 'Creating session…');
+  try {
+    const r = await fetch('/api/scan/session', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: scanMode, doc_type: docType }),
+    });
+    const data = await r.json();
+    sessionId = data.id;
+    qrImg.src = data.qr;
+    mobileUrl.textContent = data.mobile_url;
+    setStatus('waiting', 'Waiting for phone…');
+    pollTimer = setInterval(poll, 1500);
+  } catch (e) { setStatus('error', 'Could not start scan: ' + e.message); }
+}
+
+async function poll() {
+  if (!sessionId) return;
+  try {
+    const data = await (await fetch('/api/scan/session/' + sessionId)).json();
+    if (data.status === 'uploaded' || data.status === 'processing') {
+      setStatus('processing', '<span class="spinner"></span>Reading the document…');
+    } else if (data.status === 'done') {
+      stopPolling();
+      setStatus('done', '✓ Done');
+      consumeRecords(data.records || []);
+      setTimeout(() => overlay.classList.remove('show'), 700);
+    } else if (data.status === 'error') {
+      stopPolling();
+      setStatus('error', 'Error: ' + (data.error || 'unknown'));
+    }
+  } catch (e) { setStatus('error', 'Lost connection: ' + e.message); }
+}
+
+function close() { stopPolling(); overlay.classList.remove('show'); }
+scanBtn.addEventListener('click', openScan);
+closeScan.addEventListener('click', close);
+cancelScan.addEventListener('click', close);
+addFirstRow.addEventListener('click', startManualTable);
+
+// On load: render any lab reports handed off from a scan on the Medical Note tab.
+(function pickupHandoff() {
+  const raw = localStorage.getItem(HANDOFF_LABS);
+  if (!raw) return;
+  localStorage.removeItem(HANDOFF_LABS);
+  try {
+    const labRecords = JSON.parse(raw);
+    consumeRecords(labRecords);
+  } catch (e) { /* ignore malformed handoff */ }
+})();
+</script>
+{% endblock %}

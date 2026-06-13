@@ -26,13 +26,15 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import date
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 import qrcode
 
+import labs
 import ocr
+import patients
 from data import NOTE_FIELDS, PATIENT
 
 
@@ -117,27 +119,55 @@ async def note(request: Request):
     )
 
 
+@app.get("/labs", response_class=HTMLResponse)
+async def lab_reports(request: Request):
+    return templates.TemplateResponse(
+        request,
+        "labs.html",
+        {"patient": PATIENT, "active": "labs", "today": date.today().isoformat()},
+    )
+
+
 @app.get("/m/{session_id}", response_class=HTMLResponse)
 async def mobile_capture(request: Request, session_id: str):
-    if session_id not in _sessions:
+    sess = _sessions.get(session_id)
+    if sess is None:
         raise HTTPException(status_code=404, detail="Unknown or expired scan session.")
     return templates.TemplateResponse(
-        request, "mobile.html", {"session_id": session_id}
+        request, "mobile.html",
+        {"session_id": session_id, "mode": sess["mode"], "doc_type": sess["doc_type"]},
     )
 
 
 # ----------------------------------------------------------------- scan API
+_MODES = ("single", "batch")
+_DOC_TYPES = ("note", "lab")
+
+
 @app.post("/api/scan/session")
-async def create_scan_session():
+async def create_scan_session(request: Request):
+    # Body is optional: {mode: single|batch, doc_type: note|lab}. The clinician
+    # picks both up front on the desktop; every page in the scan is that type.
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 - no/blank body
+        body = {}
+    mode = body.get("mode") if body.get("mode") in _MODES else "single"
+    doc_type = body.get("doc_type") if body.get("doc_type") in _DOC_TYPES else "note"
+
     _prune_sessions()
     session_id = uuid.uuid4().hex[:10]
     with _sessions_lock:
         _sessions[session_id] = {
-            "status": "waiting", "text": None, "fields": None, "error": None,
+            "status": "waiting", "mode": mode, "doc_type": doc_type, "error": None,
             "created": time.time(),
+            "records": None,  # filled on done: list of {doc_type, ...}
         }
     mobile_url = f"{_base_url()}/m/{session_id}"
-    return {"id": session_id, "mobile_url": mobile_url, "qr": _qr_data_uri(mobile_url)}
+    return {
+        "id": session_id, "mode": mode, "doc_type": doc_type,
+        "mobile_url": mobile_url, "qr": _qr_data_uri(mobile_url),
+    }
 
 
 @app.get("/api/scan/session/{session_id}")
@@ -148,36 +178,59 @@ async def scan_status(session_id: str):
     return sess
 
 
-def _run_ocr(session_id: str, raw: bytes):
+def _set(session_id: str, **kv):
     with _sessions_lock:
         if session_id in _sessions:
-            _sessions[session_id]["status"] = "processing"
+            _sessions[session_id].update(**kv)
+
+
+def _note_record(raw: bytes) -> dict:
+    result = ocr.extract(raw)  # {text, fields, demographics}
+    patient = patients.match_patient(result.get("demographics") or {})
+    return {"doc_type": "note", **result, "patient": patient}
+
+
+def _lab_record(raw: bytes) -> dict:
+    report = labs.normalize_report(ocr.extract_labs(raw))
+    return {"doc_type": "lab", "report": report, "fhir": labs.to_fhir_bundle(report)}
+
+
+def _process(session_id: str, default_type: str, items: list[tuple[bytes, str]]):
+    """Read each (image, label) into a record. The label is the per-photo type
+    set on the phone in batch mode; blank falls back to the session default."""
+    _set(session_id, status="processing")
     try:
-        result = ocr.extract(raw)  # {text, fields}
-        with _sessions_lock:
-            if session_id in _sessions:
-                _sessions[session_id].update(
-                    status="done", text=result["text"], fields=result["fields"]
-                )
+        records = []
+        for raw, label in items:
+            doc_type = label if label in _DOC_TYPES else default_type
+            records.append(_lab_record(raw) if doc_type == "lab" else _note_record(raw))
+        _set(session_id, status="done", records=records)
     except Exception as e:  # noqa: BLE001 - surface to the UI
-        with _sessions_lock:
-            if session_id in _sessions:
-                _sessions[session_id].update(status="error", error=str(e))
+        _set(session_id, status="error", error=str(e))
 
 
 @app.post("/api/scan/session/{session_id}/upload")
-async def upload_photo(session_id: str, image: UploadFile = File(...)):
-    if session_id not in _sessions:
+async def upload_photo(
+    session_id: str,
+    images: list[UploadFile] = File(...),
+    types: list[str] = Form(default=[]),
+):
+    sess = _sessions.get(session_id)
+    if sess is None:
         raise HTTPException(status_code=404, detail="Unknown or expired scan session.")
-    raw = await image.read()
-    if not raw:
+    raws = [await img.read() for img in images]
+    # Pair each image with its per-photo label (blank if none sent); drop empties.
+    items = [(raw, types[i] if i < len(types) else "")
+             for i, raw in enumerate(raws) if raw]
+    if not items:
         raise HTTPException(status_code=400, detail="Empty file.")
 
-    with _sessions_lock:
-        _sessions[session_id]["status"] = "uploaded"
+    _set(session_id, status="uploaded")
     # OCR can be slow (MedGemma) — run off the request thread; desktop polls.
-    threading.Thread(target=_run_ocr, args=(session_id, raw), daemon=True).start()
-    return JSONResponse({"ok": True})
+    threading.Thread(
+        target=_process, args=(session_id, sess["doc_type"], items), daemon=True,
+    ).start()
+    return JSONResponse({"ok": True, "count": len(items)})
 
 
 @app.get("/healthz")

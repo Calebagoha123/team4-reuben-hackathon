@@ -18,9 +18,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 WORKDIR /app
 
 COPY pyproject.toml uv.lock* ./
-RUN uv sync --no-install-project --no-dev
+# This image is the on-device MedGemma path, so pull the heavy ML extra.
+RUN uv sync --extra medgemma --no-install-project --no-dev
 
-COPY app.py data.py ocr.py ./
+COPY app.py data.py ocr.py labs.py patients.py ./
 COPY templates ./templates
 
 ENV PATH="/app/.venv/bin:$PATH"
