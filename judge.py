@@ -122,8 +122,14 @@ def _load_pipe():
     return _pipe
 
 
-def _medgemma_run(messages: list) -> str:
-    out = _load_pipe()(text=messages, max_new_tokens=MAX_NEW_TOKENS)
+# Free-text transcription is prone to degenerate repetition loops on hard
+# handwriting ("[illegible]" x100). These break the loop. NOT applied to the
+# JSON grading call, where a no-repeat-ngram constraint would corrupt the JSON.
+TRANSCRIBE_GEN = {"repetition_penalty": 1.3, "no_repeat_ngram_size": 3}
+
+
+def _medgemma_run(messages: list, **gen) -> str:
+    out = _load_pipe()(text=messages, max_new_tokens=MAX_NEW_TOKENS, **gen)
     return out[0]["generated_text"][-1]["content"].strip()
 
 
@@ -143,7 +149,7 @@ def _out_text(o) -> str:
 
 
 def _medgemma_transcribe(image_bytes: bytes) -> str:
-    return _medgemma_run(_transcribe_conv(image_bytes))
+    return _medgemma_run(_transcribe_conv(image_bytes), **TRANSCRIBE_GEN)
 
 
 def _medgemma_transcribe_batch(image_list: list[bytes]) -> list[str]:
@@ -151,10 +157,10 @@ def _medgemma_transcribe_batch(image_list: list[bytes]) -> list[str]:
     convs = [_transcribe_conv(b) for b in image_list]
     pipe = _load_pipe()
     try:
-        out = pipe(text=convs, max_new_tokens=MAX_NEW_TOKENS, batch_size=len(convs))
+        out = pipe(text=convs, max_new_tokens=MAX_NEW_TOKENS, batch_size=len(convs), **TRANSCRIBE_GEN)
         return [_out_text(o) for o in out]
     except Exception:  # noqa: BLE001 - degrade to per-image
-        return [_out_text(pipe(text=c, max_new_tokens=MAX_NEW_TOKENS)[0]) for c in convs]
+        return [_out_text(pipe(text=c, max_new_tokens=MAX_NEW_TOKENS, **TRANSCRIBE_GEN)[0]) for c in convs]
 
 
 def _medgemma_judge(prompt: str) -> str:

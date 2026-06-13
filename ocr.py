@@ -47,10 +47,20 @@ EXTRACT_PROMPT = (
     '  "raw_transcript": "",\n'
     f"{_FIELD_TEMPLATE}\n"
     "}\n"
-    'Set "raw_transcript" to the full verbatim transcription of the note. Fill each section '
-    "field from the note's content: chief_complaint, hpi, pmhx, fmhx, shx, ros, pe, "
-    "assessment, plan, and note_type (the kind of note if stated). If a section is absent, "
-    'use "". Do not invent information. Your entire response must start with { and end with }.'
+    'Set "raw_transcript" to the full verbatim transcription of the note. Then fill the '
+    "section fields (chief_complaint, hpi, pmhx, fmhx, shx, ros, pe, assessment, plan, "
+    "note_type) ONLY from information explicitly present in the note.\n"
+    "STRICT RULES — accuracy matters far more than completeness:\n"
+    '- Most notes fill only a FEW sections. Leaving a field as "" is correct and expected; '
+    "an empty field is better than a wrong one.\n"
+    '- If the note contains nothing for a section, set it to "". Do NOT guess, infer, or '
+    "substitute the closest-looking text from elsewhere.\n"
+    "- Never copy one field's content into another (e.g. do not repeat the chief complaint "
+    "in pmhx or assessment).\n"
+    "- Put each piece of information in the single most appropriate field; never duplicate "
+    "it across fields.\n"
+    "- Do not pad, extend, or repeat list items; include only what is actually written.\n"
+    "Do not invent information. Your entire response must start with { and end with }."
 )
 
 
@@ -104,21 +114,27 @@ def _out_text(o) -> str:
     return d["generated_text"][-1]["content"].strip()
 
 
-def _medgemma_run(image_bytes: bytes, prompt: str) -> str:
-    out = _load_pipe()(text=_conv(image_bytes, prompt), max_new_tokens=MAX_NEW_TOKENS)
+# Repetition controls for free-text transcription (handwriting can send the
+# model into "[illegible]" loops). Not used for the JSON extraction call, where
+# a no-repeat-ngram constraint would corrupt the JSON structure.
+TRANSCRIBE_GEN = {"repetition_penalty": 1.3, "no_repeat_ngram_size": 3}
+
+
+def _medgemma_run(image_bytes: bytes, prompt: str, **gen) -> str:
+    out = _load_pipe()(text=_conv(image_bytes, prompt), max_new_tokens=MAX_NEW_TOKENS, **gen)
     return _out_text(out[0])
 
 
-def _medgemma_run_batch(image_list: list[bytes], prompt: str) -> list[str]:
+def _medgemma_run_batch(image_list: list[bytes], prompt: str, **gen) -> list[str]:
     """One generate call over several images. Falls back to per-image on error
     (e.g. OOM), so a too-large batch degrades gracefully instead of crashing."""
     convs = [_conv(b, prompt) for b in image_list]
     pipe = _load_pipe()
     try:
-        out = pipe(text=convs, max_new_tokens=MAX_NEW_TOKENS, batch_size=len(convs))
+        out = pipe(text=convs, max_new_tokens=MAX_NEW_TOKENS, batch_size=len(convs), **gen)
         return [_out_text(o) for o in out]
     except Exception:  # noqa: BLE001 - degrade to per-image
-        return [_out_text(pipe(text=c, max_new_tokens=MAX_NEW_TOKENS)[0]) for c in convs]
+        return [_out_text(pipe(text=c, max_new_tokens=MAX_NEW_TOKENS, **gen)[0]) for c in convs]
 
 
 # ---------------------------------------------------------------- Claude (cloud)
@@ -215,7 +231,7 @@ def warmup():
 def transcribe(image_bytes: bytes) -> str:
     if PROVIDER == "claude":
         return _claude_run(image_bytes, TRANSCRIBE_PROMPT)
-    return _medgemma_run(image_bytes, TRANSCRIBE_PROMPT)
+    return _medgemma_run(image_bytes, TRANSCRIBE_PROMPT, **TRANSCRIBE_GEN)
 
 
 def extract(image_bytes: bytes) -> dict:
