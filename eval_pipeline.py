@@ -30,6 +30,13 @@ import os
 import sys
 from pathlib import Path
 
+# Quiet transformers' per-generation warnings (pad_token_id, max_length vs
+# max_new_tokens). Set before transformers imports — and because spawned workers
+# re-import this module, it takes effect in them too. setdefault so the user can
+# still override with their own env.
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 EVAL_DIR = Path(__file__).parent / "eval"
 IMAGES_DIR = EVAL_DIR / "images"
 REFS_DIR = EVAL_DIR / "refs"
@@ -97,14 +104,14 @@ def _run_parallel(worker, items: list, gpus: list[str], batch_size: int) -> list
     if not items:
         return []
     if not gpus:
-        return worker(None, items, batch_size)
+        return worker(None, items, batch_size, 0)
     import multiprocessing as mp
 
     shards = [s for s in _shard(items, len(gpus)) if s]
     tasks = list(zip(gpus, shards))
     ctx = mp.get_context("spawn")
     with ctx.Pool(len(tasks)) as pool:
-        parts = pool.starmap(worker, [(g, s, batch_size) for g, s in tasks])
+        parts = pool.starmap(worker, [(g, s, batch_size, i) for i, (g, s) in enumerate(tasks)])
     merged: list = []
     for p in parts:
         merged.extend(p)
@@ -116,14 +123,23 @@ def _pin(gpu: str | None) -> None:
         os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)
 
 
+def _bar(total: int, desc: str, position: int):
+    """A tqdm bar to stderr. With multiple GPUs each worker gets its own line
+    (position), so you see one bar per GPU. tqdm ships with transformers."""
+    from tqdm.auto import tqdm
+
+    return tqdm(total=total, desc=desc, position=position, file=sys.stderr, leave=True, dynamic_ncols=True)
+
+
 # Workers must be module-level so the spawn pool can pickle them by name. Each
 # imports torch/ocr/judge only AFTER pinning the GPU, so CUDA binds to it.
-def _transcribe_worker(gpu: str | None, image_names: list[str], batch_size: int) -> list[str]:
+def _transcribe_worker(gpu: str | None, image_names: list[str], batch_size: int, position: int = 0) -> list[str]:
     _pin(gpu)
     import judge
 
     REFS_DIR.mkdir(parents=True, exist_ok=True)
     done = []
+    bar = _bar(len(image_names), f"transcribe gpu{gpu}", position)
     for chunk in _chunks(image_names, batch_size):
         blobs = [(IMAGES_DIR / n).read_bytes() for n in chunk]
         try:
@@ -133,14 +149,17 @@ def _transcribe_worker(gpu: str | None, image_names: list[str], batch_size: int)
         for name, text in zip(chunk, texts):
             (REFS_DIR / f"{Path(name).stem}.txt").write_text(text.strip() + "\n")
             done.append(name)
+        bar.update(len(chunk))
+    bar.close()
     return done
 
 
-def _extract_worker(gpu: str | None, image_names: list[str], batch_size: int) -> list[dict]:
+def _extract_worker(gpu: str | None, image_names: list[str], batch_size: int, position: int = 0) -> list[dict]:
     _pin(gpu)
     import ocr
 
     preds = []
+    bar = _bar(len(image_names), f"extract gpu{gpu}", position)
     for chunk in _chunks(image_names, batch_size):
         blobs = [(IMAGES_DIR / n).read_bytes() for n in chunk]
         try:
@@ -152,16 +171,19 @@ def _extract_worker(gpu: str | None, image_names: list[str], batch_size: int) ->
             if out.get("error"):
                 rec["error"] = out["error"]
             preds.append(rec)
+        bar.update(len(chunk))
+    bar.close()
     return preds
 
 
-def _judge_worker(gpu: str | None, payloads: list[dict], batch_size: int) -> list[dict]:
+def _judge_worker(gpu: str | None, payloads: list[dict], batch_size: int, position: int = 0) -> list[dict]:
     # batch_size is unused for judging (per-item: the long JSON output makes
     # batched generation OOM-prone; the speedup comes from data parallelism).
     _pin(gpu)
     import judge
 
     out = []
+    bar = _bar(len(payloads), f"judge gpu{gpu}", position)
     for p in payloads:
         ref = (p.get("reference") or "").strip()
         if not ref:
@@ -170,6 +192,8 @@ def _judge_worker(gpu: str | None, payloads: list[dict], batch_size: int) -> lis
         else:
             verdicts = judge.judge_note(ref, p.get("fields", {}))
         out.append({"image": p["image"], "verdicts": verdicts, "human": {}})
+        bar.update(1)
+    bar.close()
     return out
 
 
