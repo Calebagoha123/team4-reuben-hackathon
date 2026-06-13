@@ -94,13 +94,27 @@ def _chunks(seq: list, size: int):
         yield seq[i:i + size]
 
 
-def _run_parallel(worker, items: list, gpus: list[str], batch_size: int) -> list:
-    """Split `items` across `gpus`, run `worker(gpu, shard, batch_size)` in one
-    spawned process per GPU, and concatenate results in order.
+def _worker_entry(worker, gpu, items, batch_size, position, q) -> None:
+    """Run one worker in its process and push (position, result) to the queue.
+    Never lets an exception kill the process silently — that would hang the
+    parent's queue read."""
+    try:
+        print(f"[worker] gpu {gpu} pid {os.getpid()}: {len(items)} item(s)", flush=True)
+        q.put((position, worker(gpu, items, batch_size, position)))
+    except Exception:  # noqa: BLE001
+        import traceback
 
-    Even a single GPU runs in a subprocess (one worker) so the model is freed on
-    process exit — that's what keeps the 4B and 27B from being resident at once
-    across phases. Only with no GPU pinned (gpus==[]) does it run inline."""
+        traceback.print_exc()
+        q.put((position, []))
+
+
+def _run_parallel(worker, items: list, gpus: list[str], batch_size: int) -> list:
+    """Split `items` across `gpus` and run `worker(gpu, shard, batch_size, pos)`
+    in one process PER GPU, all started before any join, so they run truly
+    concurrently. Results are collected via a queue and concatenated in shard
+    order. Each process loads its own model copy and frees it on exit (so the 4B
+    and 27B are never resident at once across phases). With no GPU pinned
+    (gpus==[]) it runs inline."""
     if not items:
         return []
     if not gpus:
@@ -108,13 +122,23 @@ def _run_parallel(worker, items: list, gpus: list[str], batch_size: int) -> list
     import multiprocessing as mp
 
     shards = [s for s in _shard(items, len(gpus)) if s]
-    tasks = list(zip(gpus, shards))
     ctx = mp.get_context("spawn")
-    with ctx.Pool(len(tasks)) as pool:
-        parts = pool.starmap(worker, [(g, s, batch_size, i) for i, (g, s) in enumerate(tasks)])
+    q = ctx.Queue()
+    procs = []
+    for i, (gpu, shard) in enumerate(zip(gpus, shards)):
+        p = ctx.Process(target=_worker_entry, args=(worker, gpu, shard, batch_size, i, q))
+        p.start()  # start all up front — this is what makes them concurrent
+        procs.append(p)
+    # Drain the queue BEFORE joining (a full pipe would otherwise deadlock join).
+    results: dict[int, list] = {}
+    for _ in procs:
+        pos, res = q.get()
+        results[pos] = res
+    for p in procs:
+        p.join()
     merged: list = []
-    for p in parts:
-        merged.extend(p)
+    for i in range(len(procs)):
+        merged.extend(results.get(i, []))
     return merged
 
 
@@ -366,8 +390,14 @@ def main() -> int:
     common.add_argument("--provider", default=argparse.SUPPRESS,
                         help="override JUDGE_PROVIDER (medgemma|claude)")
     common.add_argument("--gpus", default=argparse.SUPPRESS,
-                        help="comma-separated physical GPU ids to data-parallel across "
+                        help="default GPU ids to data-parallel across, comma-separated "
                              "(default: CUDA_VISIBLE_DEVICES, e.g. '2,3')")
+    common.add_argument("--extract-gpus", default=argparse.SUPPRESS,
+                        help="GPU ids for extraction only — the 4B is small, so use all of "
+                             "them, e.g. '0,1,2,3' (default: --gpus)")
+    common.add_argument("--judge-gpus", default=argparse.SUPPRESS,
+                        help="GPU ids for the 27B judge + reference transcription; needs the "
+                             "big cards, e.g. '2,3' (default: --gpus)")
     common.add_argument("--batch-size", type=int, default=argparse.SUPPRESS,
                         help="images per generate call within each GPU worker (default 4)")
 
@@ -383,30 +413,39 @@ def main() -> int:
     # SUPPRESS means absent flags aren't set as attributes — apply defaults here.
     args.provider = getattr(args, "provider", None)
     args.gpus = getattr(args, "gpus", None)
+    args.extract_gpus = getattr(args, "extract_gpus", None)
+    args.judge_gpus = getattr(args, "judge_gpus", None)
     args.batch_size = getattr(args, "batch_size", 4)
     if args.provider:
         os.environ["JUDGE_PROVIDER"] = args.provider
-    gpus = _gpu_list(args.gpus)
     bs = args.batch_size
+    gpus = _gpu_list(args.gpus)
+    # Per-phase GPU sets fall back to --gpus. Extraction (4B) can use everything;
+    # judging + reference transcription (27B) need the big cards.
+    extract_gpus = _gpu_list(args.extract_gpus) if args.extract_gpus is not None else gpus
+    judge_gpus = _gpu_list(args.judge_gpus) if args.judge_gpus is not None else gpus
 
     if args.cmd == "bootstrap":
-        return bootstrap(gpus, bs)
+        return bootstrap(judge_gpus, bs)
 
     if args.cmd == "run":
         run_id = _new_run_id()
-        print(f"=== run {run_id} (gpus={gpus or 'default'}, batch={bs}) ===")
-        rc = bootstrap(gpus, bs) or extract(run_id, gpus, bs) or judge_run(run_id, gpus, bs)
+        print(f"=== run {run_id} (extract_gpus={extract_gpus or 'default'}, "
+              f"judge_gpus={judge_gpus or 'default'}, batch={bs}) ===")
+        rc = (bootstrap(judge_gpus, bs)
+              or extract(run_id, extract_gpus, bs)
+              or judge_run(run_id, judge_gpus, bs))
         return rc or score(run_id)
 
     # phase commands take an optional run_id
     run_id = getattr(args, "run_id", None)
     if args.cmd == "extract":
-        return extract(run_id or _new_run_id(), gpus, bs)
+        return extract(run_id or _new_run_id(), extract_gpus, bs)
     run_id = run_id or _latest_run()
     if not run_id:
         print("No run id given and no existing runs.", file=sys.stderr)
         return 1
-    return judge_run(run_id, gpus, bs) if args.cmd == "judge" else score(run_id)
+    return judge_run(run_id, judge_gpus, bs) if args.cmd == "judge" else score(run_id)
 
 
 if __name__ == "__main__":
