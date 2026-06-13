@@ -334,19 +334,32 @@ def _new_run_id() -> str:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--provider", help="override JUDGE_PROVIDER (medgemma|claude)")
-    ap.add_argument("--gpus", help="comma-separated physical GPU ids to data-parallel across "
-                                   "(default: CUDA_VISIBLE_DEVICES, e.g. '2,3')")
-    ap.add_argument("--batch-size", type=int, default=4,
-                    help="images per generate call within each GPU worker (default 4)")
+    # Common flags live on a parent parser attached to BOTH the top level and
+    # every subcommand, so they're accepted before OR after the subcommand
+    # (e.g. both `--batch-size 4 run` and `run --batch-size 4`). argparse.SUPPRESS
+    # defaults stop the subparser copy from clobbering a value set up top.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--provider", default=argparse.SUPPRESS,
+                        help="override JUDGE_PROVIDER (medgemma|claude)")
+    common.add_argument("--gpus", default=argparse.SUPPRESS,
+                        help="comma-separated physical GPU ids to data-parallel across "
+                             "(default: CUDA_VISIBLE_DEVICES, e.g. '2,3')")
+    common.add_argument("--batch-size", type=int, default=argparse.SUPPRESS,
+                        help="images per generate call within each GPU worker (default 4)")
+
+    ap = argparse.ArgumentParser(description=__doc__, parents=[common],
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("bootstrap", help="(re)build reference transcripts")
-    sub.add_parser("run", help="bootstrap + extract + judge + score (new run)")
+    sub.add_parser("bootstrap", parents=[common], help="(re)build reference transcripts")
+    sub.add_parser("run", parents=[common], help="bootstrap + extract + judge + score (new run)")
     for name in ("extract", "judge", "score"):
-        sp = sub.add_parser(name, help=f"{name} phase")
+        sp = sub.add_parser(name, parents=[common], help=f"{name} phase")
         sp.add_argument("run_id", nargs="?", help="run id (default: latest, or new for extract)")
     args = ap.parse_args()
+    # SUPPRESS means absent flags aren't set as attributes — apply defaults here.
+    args.provider = getattr(args, "provider", None)
+    args.gpus = getattr(args, "gpus", None)
+    args.batch_size = getattr(args, "batch_size", 4)
     if args.provider:
         os.environ["JUDGE_PROVIDER"] = args.provider
     gpus = _gpu_list(args.gpus)
