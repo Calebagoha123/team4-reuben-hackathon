@@ -64,93 +64,168 @@ def _latest_run() -> str | None:
     return runs[-1] if runs else None
 
 
-# ---------------------------------------------------------------- phases
-def bootstrap() -> int:
-    """Make a trusted transcript for any image that lacks one. Existing refs are
-    left alone so clinician corrections persist across runs."""
+# ---------------------------------------------------------------- parallelism
+# Data parallelism: each GPU gets a FULL copy of the model and its own slice of
+# the images (not one model sharded across GPUs — that's slower for throughput).
+# Workers run in spawned processes, each pinned to one physical GPU via
+# CUDA_VISIBLE_DEVICES, so ocr/judge load on cuda:0 of that single visible device.
+def _gpu_list(arg: str | None) -> list[str]:
+    raw = arg if arg is not None else os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    return [g.strip() for g in raw.split(",") if g.strip()]
+
+
+def _shard(items: list, n: int) -> list[list]:
+    import math
+
+    k = max(1, math.ceil(len(items) / n))
+    return [items[i * k:(i + 1) * k] for i in range(n)]
+
+
+def _chunks(seq: list, size: int):
+    size = max(1, size)
+    for i in range(0, len(seq), size):
+        yield seq[i:i + size]
+
+
+def _run_parallel(worker, items: list, gpus: list[str], batch_size: int) -> list:
+    """Split `items` across `gpus`, run `worker(gpu, shard, batch_size)` in one
+    spawned process per GPU, and concatenate results in order.
+
+    Even a single GPU runs in a subprocess (one worker) so the model is freed on
+    process exit — that's what keeps the 4B and 27B from being resident at once
+    across phases. Only with no GPU pinned (gpus==[]) does it run inline."""
+    if not items:
+        return []
+    if not gpus:
+        return worker(None, items, batch_size)
+    import multiprocessing as mp
+
+    shards = [s for s in _shard(items, len(gpus)) if s]
+    tasks = list(zip(gpus, shards))
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(len(tasks)) as pool:
+        parts = pool.starmap(worker, [(g, s, batch_size) for g, s in tasks])
+    merged: list = []
+    for p in parts:
+        merged.extend(p)
+    return merged
+
+
+def _pin(gpu: str | None) -> None:
+    if gpu is not None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)
+
+
+# Workers must be module-level so the spawn pool can pickle them by name. Each
+# imports torch/ocr/judge only AFTER pinning the GPU, so CUDA binds to it.
+def _transcribe_worker(gpu: str | None, image_names: list[str], batch_size: int) -> list[str]:
+    _pin(gpu)
     import judge
 
     REFS_DIR.mkdir(parents=True, exist_ok=True)
+    done = []
+    for chunk in _chunks(image_names, batch_size):
+        blobs = [(IMAGES_DIR / n).read_bytes() for n in chunk]
+        try:
+            texts = judge.transcribe_batch(blobs)
+        except Exception as e:  # noqa: BLE001
+            texts = [f"[transcription failed: {e}]"] * len(blobs)
+        for name, text in zip(chunk, texts):
+            (REFS_DIR / f"{Path(name).stem}.txt").write_text(text.strip() + "\n")
+            done.append(name)
+    return done
+
+
+def _extract_worker(gpu: str | None, image_names: list[str], batch_size: int) -> list[dict]:
+    _pin(gpu)
+    import ocr
+
+    preds = []
+    for chunk in _chunks(image_names, batch_size):
+        blobs = [(IMAGES_DIR / n).read_bytes() for n in chunk]
+        try:
+            outs = ocr.extract_batch(blobs)
+        except Exception as e:  # noqa: BLE001 - whole chunk failed
+            outs = [{"text": "", "fields": {}, "error": str(e)}] * len(blobs)
+        for name, out in zip(chunk, outs):
+            rec = {"image": name, "fields": out.get("fields", {}), "raw_transcript": out.get("text", "")}
+            if out.get("error"):
+                rec["error"] = out["error"]
+            preds.append(rec)
+    return preds
+
+
+def _judge_worker(gpu: str | None, payloads: list[dict], batch_size: int) -> list[dict]:
+    # batch_size is unused for judging (per-item: the long JSON output makes
+    # batched generation OOM-prone; the speedup comes from data parallelism).
+    _pin(gpu)
+    import judge
+
+    out = []
+    for p in payloads:
+        ref = (p.get("reference") or "").strip()
+        if not ref:
+            verdicts = {k: {"verdict": "uncertain", "reason": "no reference transcript"}
+                        for k in judge._FIELD_KEYS}
+        else:
+            verdicts = judge.judge_note(ref, p.get("fields", {}))
+        out.append({"image": p["image"], "verdicts": verdicts, "human": {}})
+    return out
+
+
+# ---------------------------------------------------------------- phases
+def bootstrap(gpus: list[str], batch_size: int) -> int:
+    """Make a trusted transcript for any image that lacks one. Existing refs are
+    left alone so clinician corrections persist across runs."""
     images = _images()
     if not images:
         print(f"No images in {IMAGES_DIR} — add some note photos first.", file=sys.stderr)
         return 1
-    made = 0
-    for img in images:
-        ref = _ref_path(img)
-        if ref.is_file() and ref.read_text().strip():
-            continue
-        print(f"[ref] transcribing {img.name} …", flush=True)
-        try:
-            ref.write_text(judge.transcribe_reference(img.read_bytes()).strip() + "\n")
-            made += 1
-        except Exception as e:  # noqa: BLE001 - record + continue
-            print(f"    failed: {e}", file=sys.stderr)
-    judge.free()
-    print(f"Bootstrapped {made} new reference transcript(s); {len(images)} image(s) total.")
+    todo = [img.name for img in images
+            if not (_ref_path(img).is_file() and _ref_path(img).read_text().strip())]
+    if not todo:
+        print(f"All {len(images)} image(s) already have reference transcripts.")
+        return 0
+    print(f"[ref] transcribing {len(todo)} image(s) on GPU(s) {gpus or 'default'} "
+          f"(batch {batch_size}) …", flush=True)
+    done = _run_parallel(_transcribe_worker, todo, gpus, batch_size)
+    print(f"Bootstrapped {len(done)} new reference transcript(s); {len(images)} image(s) total.")
     return 0
 
 
-def extract(run_id: str) -> int:
-    """Run the 4B extractor over every image -> predictions.json, then free it."""
-    import ocr
-
-    images = _images()
+def extract(run_id: str, gpus: list[str], batch_size: int) -> int:
+    """Run the 4B extractor over every image -> predictions.json."""
+    images = [img.name for img in _images()]
     if not images:
         print(f"No images in {IMAGES_DIR}.", file=sys.stderr)
         return 1
-    preds = []
-    for img in images:
-        print(f"[extract] {img.name} (OCR_PROVIDER={ocr.PROVIDER}) …", flush=True)
-        try:
-            out = ocr.extract(img.read_bytes())
-            preds.append({"image": img.name, "fields": out["fields"], "raw_transcript": out["text"]})
-        except Exception as e:  # noqa: BLE001
-            print(f"    failed: {e}", file=sys.stderr)
-            preds.append({"image": img.name, "fields": {}, "raw_transcript": "", "error": str(e)})
+    print(f"[extract] {len(images)} note(s) on GPU(s) {gpus or 'default'} (batch {batch_size}) …",
+          flush=True)
+    preds = _run_parallel(_extract_worker, images, gpus, batch_size)
     _write_json(RUNS_DIR / run_id / "predictions.json", preds)
-
-    # Free the 4B so the 27B judge has the GPU to itself.
-    ocr._pipe = None
-    try:
-        import gc
-
-        import torch
-
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    except Exception:  # noqa: BLE001
-        pass
     print(f"Extracted {len(preds)} note(s) -> {run_id}/predictions.json")
     return 0
 
 
-def judge_run(run_id: str) -> int:
+def judge_run(run_id: str, gpus: list[str], batch_size: int) -> int:
     """Grade each prediction against its reference transcript -> judgments.json."""
-    import judge
-
     preds = _load_json(RUNS_DIR / run_id / "predictions.json", None)
     if preds is None:
         print(f"No predictions for run {run_id}; run `extract` first.", file=sys.stderr)
         return 1
-    judgments = []
+    payloads = []
     for p in preds:
-        img = p["image"]
-        ref = _ref_path(IMAGES_DIR / img)
-        reference = ref.read_text().strip() if ref.is_file() else ""
-        if not reference:
-            print(f"[judge] {img}: NO reference transcript — skipping (run bootstrap).", file=sys.stderr)
-            verdicts = {k: {"verdict": "uncertain", "reason": "no reference transcript"}
-                        for k in judge._FIELD_KEYS}
-        else:
-            print(f"[judge] {img} (JUDGE_PROVIDER={judge.PROVIDER}) …", flush=True)
-            verdicts = judge.judge_note(reference, p.get("fields", {}))
-        judgments.append({"image": img, "verdicts": verdicts, "human": {}})
+        ref = _ref_path(IMAGES_DIR / p["image"])
+        payloads.append({
+            "image": p["image"],
+            "fields": p.get("fields", {}),
+            "reference": ref.read_text() if ref.is_file() else "",
+        })
+    print(f"[judge] {len(payloads)} note(s) on GPU(s) {gpus or 'default'} …", flush=True)
+    judgments = _run_parallel(_judge_worker, payloads, gpus, batch_size)
     # Preserve any human review already recorded for this run.
     _merge_human(RUNS_DIR / run_id / "judgments.json", judgments)
     _write_json(RUNS_DIR / run_id / "judgments.json", judgments)
-    judge.free()
     print(f"Judged {len(judgments)} note(s) -> {run_id}/judgments.json")
     return 0
 
@@ -260,44 +335,41 @@ def _new_run_id() -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--provider", help="override JUDGE_PROVIDER (medgemma|claude)")
+    ap.add_argument("--gpus", help="comma-separated physical GPU ids to data-parallel across "
+                                   "(default: CUDA_VISIBLE_DEVICES, e.g. '2,3')")
+    ap.add_argument("--batch-size", type=int, default=4,
+                    help="images per generate call within each GPU worker (default 4)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("bootstrap", help="(re)build reference transcripts")
     sub.add_parser("run", help="bootstrap + extract + judge + score (new run)")
     for name in ("extract", "judge", "score"):
         sp = sub.add_parser(name, help=f"{name} phase")
         sp.add_argument("run_id", nargs="?", help="run id (default: latest, or new for extract)")
-    ap.add_argument("--provider", help="override JUDGE_PROVIDER (medgemma|claude)")
-    args, _ = ap.parse_known_args()
-    # --provider may land before or after the subcommand; re-read leniently.
+    args = ap.parse_args()
     if args.provider:
         os.environ["JUDGE_PROVIDER"] = args.provider
+    gpus = _gpu_list(args.gpus)
+    bs = args.batch_size
 
     if args.cmd == "bootstrap":
-        return bootstrap()
+        return bootstrap(gpus, bs)
 
     if args.cmd == "run":
         run_id = _new_run_id()
-        print(f"=== run {run_id} ===")
-        rc = bootstrap()
-        if rc:
-            return rc
-        rc = extract(run_id)
-        if rc:
-            return rc
-        rc = judge_run(run_id)
-        if rc:
-            return rc
-        return score(run_id)
+        print(f"=== run {run_id} (gpus={gpus or 'default'}, batch={bs}) ===")
+        rc = bootstrap(gpus, bs) or extract(run_id, gpus, bs) or judge_run(run_id, gpus, bs)
+        return rc or score(run_id)
 
     # phase commands take an optional run_id
     run_id = getattr(args, "run_id", None)
     if args.cmd == "extract":
-        return extract(run_id or _new_run_id())
+        return extract(run_id or _new_run_id(), gpus, bs)
     run_id = run_id or _latest_run()
     if not run_id:
         print("No run id given and no existing runs.", file=sys.stderr)
         return 1
-    return judge_run(run_id) if args.cmd == "judge" else score(run_id)
+    return judge_run(run_id, gpus, bs) if args.cmd == "judge" else score(run_id)
 
 
 if __name__ == "__main__":

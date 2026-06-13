@@ -87,16 +87,38 @@ def _load_pipe():
     return _pipe
 
 
-def _medgemma_run(image_bytes: bytes, prompt: str) -> str:
-    messages = [{
+def _conv(image_bytes: bytes, prompt: str) -> list:
+    return [{
         "role": "user",
         "content": [
             {"type": "image", "image": _pil(image_bytes)},
             {"type": "text", "text": prompt},
         ],
     }]
-    out = _load_pipe()(text=messages, max_new_tokens=MAX_NEW_TOKENS)
-    return out[0]["generated_text"][-1]["content"].strip()
+
+
+def _out_text(o) -> str:
+    # A pipeline call on one conversation returns [{"generated_text": [...]}];
+    # in a batch each element may be that list or the bare dict. Handle both.
+    d = o[0] if isinstance(o, list) else o
+    return d["generated_text"][-1]["content"].strip()
+
+
+def _medgemma_run(image_bytes: bytes, prompt: str) -> str:
+    out = _load_pipe()(text=_conv(image_bytes, prompt), max_new_tokens=MAX_NEW_TOKENS)
+    return _out_text(out[0])
+
+
+def _medgemma_run_batch(image_list: list[bytes], prompt: str) -> list[str]:
+    """One generate call over several images. Falls back to per-image on error
+    (e.g. OOM), so a too-large batch degrades gracefully instead of crashing."""
+    convs = [_conv(b, prompt) for b in image_list]
+    pipe = _load_pipe()
+    try:
+        out = pipe(text=convs, max_new_tokens=MAX_NEW_TOKENS, batch_size=len(convs))
+        return [_out_text(o) for o in out]
+    except Exception:  # noqa: BLE001 - degrade to per-image
+        return [_out_text(pipe(text=c, max_new_tokens=MAX_NEW_TOKENS)[0]) for c in convs]
 
 
 # ---------------------------------------------------------------- Claude (cloud)
@@ -206,7 +228,11 @@ def extract(image_bytes: bytes) -> dict:
         raw = _claude_extract_json(image_bytes)
     else:
         raw = _medgemma_run(image_bytes, EXTRACT_PROMPT)
+    return _assemble(raw)
 
+
+def _assemble(raw: str) -> dict:
+    """Turn one model response into {text, fields}, salvaging broken JSON."""
     try:
         data = _parse_json(raw)
         fields = {k: str(data.get(k) or "").strip() for k in _FIELD_KEYS}
@@ -218,3 +244,10 @@ def extract(image_bytes: bytes) -> dict:
     if not transcript:
         transcript = "\n".join(v for v in fields.values() if v) or raw.strip()
     return {"text": transcript, "fields": fields}
+
+
+def extract_batch(image_list: list[bytes]) -> list[dict]:
+    """extract() over several images in one generate call (local path only)."""
+    if PROVIDER == "claude":
+        return [extract(b) for b in image_list]
+    return [_assemble(raw) for raw in _medgemma_run_batch(image_list, EXTRACT_PROMPT)]

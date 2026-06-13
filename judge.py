@@ -127,15 +127,34 @@ def _medgemma_run(messages: list) -> str:
     return out[0]["generated_text"][-1]["content"].strip()
 
 
-def _medgemma_transcribe(image_bytes: bytes) -> str:
-    messages = [{
+def _transcribe_conv(image_bytes: bytes) -> list:
+    return [{
         "role": "user",
         "content": [
             {"type": "image", "image": _pil(image_bytes)},
             {"type": "text", "text": TRANSCRIBE_PROMPT},
         ],
     }]
-    return _medgemma_run(messages)
+
+
+def _out_text(o) -> str:
+    d = o[0] if isinstance(o, list) else o
+    return d["generated_text"][-1]["content"].strip()
+
+
+def _medgemma_transcribe(image_bytes: bytes) -> str:
+    return _medgemma_run(_transcribe_conv(image_bytes))
+
+
+def _medgemma_transcribe_batch(image_list: list[bytes]) -> list[str]:
+    """Transcribe several images in one generate call; per-image fallback on error."""
+    convs = [_transcribe_conv(b) for b in image_list]
+    pipe = _load_pipe()
+    try:
+        out = pipe(text=convs, max_new_tokens=MAX_NEW_TOKENS, batch_size=len(convs))
+        return [_out_text(o) for o in out]
+    except Exception:  # noqa: BLE001 - degrade to per-image
+        return [_out_text(pipe(text=c, max_new_tokens=MAX_NEW_TOKENS)[0]) for c in convs]
 
 
 def _medgemma_judge(prompt: str) -> str:
@@ -223,6 +242,13 @@ def transcribe_reference(image_bytes: bytes) -> str:
     if PROVIDER == "claude":
         return _claude_transcribe(image_bytes)
     return _medgemma_transcribe(image_bytes)
+
+
+def transcribe_batch(image_list: list[bytes]) -> list[str]:
+    """transcribe_reference() over several images in one generate call (local path)."""
+    if PROVIDER == "claude":
+        return [_claude_transcribe(b) for b in image_list]
+    return _medgemma_transcribe_batch(image_list)
 
 
 def judge_note(reference: str, fields: dict) -> dict:
